@@ -1,38 +1,36 @@
-name: Build VST3
+name: Build DreamShare VST3
+
 on:
   push:
+    branches: [ main, master ]
+  pull_request:
   workflow_dispatch:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libx11-dev libxcomposite-dev libxcursor-dev \
-            libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libfreetype-dev \
-            libfontconfig1-dev libcurl4-openssl-dev libgl1-mesa-dev
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-      - name: Configure (macOS universal)
-        if: runner.os == 'macOS'
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+      - name: Check Worker syntax
+        run: node --check src/worker.js
 
-      - name: Configure
-        if: runner.os != 'macOS'
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Configure JUCE plugin
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DDS_AUDIO_PASSTHROUGH=ON
 
-      - name: Build
+      - name: Build VST3
         run: cmake --build build --config Release --parallel
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload VST3 and Worker source
+        uses: actions/upload-artifact@v4
         with:
-          name: DreamShareLite-${{ runner.os }}-VST3
-          path: build/DreamShareLite_artefacts/Release/VST3/
+          name: DreamShare-Windows-VST3
+          path: |
+            build/DreamShareLite_artefacts/Release/VST3/
+            src/worker.js

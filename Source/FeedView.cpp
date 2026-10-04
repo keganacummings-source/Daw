@@ -83,7 +83,9 @@ void FeedView::layoutItems()
         for (auto& b : it.badges)
         {
             const int bw = (int) std::ceil (textWidth (b, badgeFont)) + 10;
-            it.badgeRs.push_back ({ b, { bx, cy + 2, bw, 13 } });
+            const auto custom = it.badgeStyles.find (b);
+            it.badgeRs.push_back ({ b, { bx, cy + 2, bw, 13 },
+                                    custom != it.badgeStyles.end() ? custom->second : badge (b) });
             bx += bw + 4;
         }
         it.delR = it.canDelete ? juce::Rectangle<int> (w - 6 - 8 - 34, cy, 34, 16) : juce::Rectangle<int>();
@@ -174,10 +176,9 @@ void FeedView::paintContent (juce::Graphics& g)
         }
         for (auto& b : it.badgeRs)
         {
-            const auto bc = badge (b.label);
-            g.setColour (bc.fill);  g.fillRoundedRectangle (b.r.toFloat(), 3.0f);
-            g.setColour (bc.edge);  g.drawRoundedRectangle (b.r.toFloat().reduced (0.5f), 3.0f, 1.0f);
-            g.setColour (bc.ink);   g.setFont (font (9.0f, true));
+            g.setColour (b.style.fill);  g.fillRoundedRectangle (b.r.toFloat(), 3.0f);
+            g.setColour (b.style.edge);  g.drawRoundedRectangle (b.r.toFloat().reduced (0.5f), 3.0f, 1.0f);
+            g.setColour (b.style.ink);   g.setFont (font (9.0f, true));
             g.drawText (b.label, b.r, juce::Justification::centred, false);
         }
         if (it.canDelete)

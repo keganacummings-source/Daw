@@ -11,12 +11,13 @@ namespace ds
         juce::String kind;       // "chat" | "thread" | "comment"
         juce::String id, threadId, user, title, body, meta, me;
         juce::StringArray badges;
+        std::map<juce::String, theme::Badge> badgeStyles;
         Reactions reactions;
         bool canDelete = false, clickable = false;
 
         // --- filled in by FeedView::layoutItems() ---
         struct Chip  { juce::String key, label; juce::Rectangle<int> r; bool on = false; };
-        struct BadgeR { juce::String label; juce::Rectangle<int> r; };
+        struct BadgeR { juce::String label; juce::Rectangle<int> r; theme::Badge style; };
         int y = 0, h = 0;
         juce::TextLayout titleL, bodyL;
         juce::Rectangle<int> nameR, delR, titleR, metaR, bodyR, addR;

@@ -94,7 +94,7 @@ juce::File Client::sessionFile() const
 void Client::loadSession()
 {
     auto v = juce::JSON::parse (sessionFile());
-    Session s { v["user"].toString(), v["role"].toString(), v["token"].toString() };
+    Session s { v["user"].toString(), v["role"].toString(), v["token"].toString(), v["theme"].toString() };
     if (s.valid()) session = s;
 }
 
@@ -103,7 +103,8 @@ void Client::saveSession (const Session& s) const
     auto f = sessionFile();
     if (! s.valid()) { f.deleteFile(); return; }
     f.getParentDirectory().createDirectory();
-    f.replaceWithText (juce::JSON::toString (obj ({ { "user", s.user }, { "role", s.role }, { "token", s.token } })));
+    f.replaceWithText (juce::JSON::toString (obj ({ { "user", s.user }, { "role", s.role },
+                                                     { "token", s.token }, { "theme", s.theme } })));
 }
 
 void Client::setSession (const Session& s)
@@ -226,6 +227,22 @@ void Client::pull()
     juce::var j; juce::String err;
     if (! http (false, {}, j, err)) { notifyStatus (err); return; }
 
+    auto me = getSession();
+    if (me.valid() && me.theme.isEmpty())
+    {
+        juce::var sessionInfo;
+        const auto request = obj ({ { "action", "session" }, { "user", me.user }, { "token", me.token } });
+        if (http (true, juce::JSON::toString (request, true), sessionInfo, err))
+        {
+            const auto themeId = sessionInfo["theme"].toString().toLowerCase();
+            if (themeId.isNotEmpty())
+            {
+                me.theme = themeId;
+                setSession (me);
+            }
+        }
+    }
+
     auto s = std::make_shared<Snapshot>();
 
     if (auto* arr = j["threads"].getArray())
@@ -253,14 +270,29 @@ void Client::pull()
     s->supers  = parseStrings (j["supers"]);
     if (s->supers.isEmpty()) { s->supers.add ("Trippah"); s->supers.add ("Goonr"); }
 
+    if (auto* themes = j["themes"].getArray())
+        for (auto& value : *themes)
+        {
+            ThemeChoice choice { value["id"].toString().toLowerCase(), value["name"].toString() };
+            if (choice.id.isNotEmpty() && choice.name.isNotEmpty()) s->themes.push_back (std::move (choice));
+        }
+
     if (auto* ro = j["roles"].getDynamicObject())
         for (auto& nv : ro->getProperties())
             s->roles[nv.name.toString().toLowerCase()] = parseStrings (nv.value);
 
+    if (auto* custom = j["customRoles"].getDynamicObject())
+        for (auto& nv : custom->getProperties())
+        {
+            CustomRole role { nv.value["label"].toString(), nv.value["color"].toString(),
+                              nv.value["bg"].toString() };
+            if (role.label.isNotEmpty()) s->customRoles[nv.name.toString().toLowerCase()] = std::move (role);
+        }
+
     // Online list: server presence + me + anyone who chatted in the last 3 minutes (same as the web viewer)
     juce::StringArray online = parseStrings (j["online"]);
-    const auto me = getSession();
-    if (me.valid()) online.addIfNotAlreadyThere (me.user, true);
+    const auto currentSession = getSession();
+    if (currentSession.valid()) online.addIfNotAlreadyThere (currentSession.user, true);
     const auto now = juce::Time::currentTimeMillis();
     for (auto& m : s->chat)
         if (now - m.at < 180000) online.addIfNotAlreadyThere (m.user, true);
@@ -268,7 +300,7 @@ void Client::pull()
 
     { const juce::ScopedLock sl (lock); snapshot = s; }
     notifyChanged();
-    notifyStatus ("Live \xc2\xb7 online " + juce::String (online.size()));
+    notifyStatus ("Live " + juce::String::charToString (0xB7) + " online " + juce::String (online.size()));
 }
 
 void Client::beat()
@@ -300,8 +332,9 @@ void Client::login (const juce::String& user, const juce::String& pass, Done don
         const bool ok = http (true, juce::JSON::toString (body, true), j, err) && j["token"].toString().isNotEmpty();
         if (ok)
         {
-            setSession ({ j["user"].toString().isNotEmpty() ? j["user"].toString() : user,
-                          j["role"].toString(), j["token"].toString() });
+            Session next { j["user"].toString().isNotEmpty() ? j["user"].toString() : user,
+                           j["role"].toString(), j["token"].toString(), j["theme"].toString().toLowerCase() };
+            setSession (next);
             forcePull = true;
             lastBeat = 0;
         }
@@ -337,6 +370,16 @@ void Client::send (juce::var body, Done done)
         const bool ok = http (true, juce::JSON::toString (body, true), j, err);
         if (ok)
         {
+            if (body["action"].toString() == "set_theme" || body["action"].toString() == "theme")
+            {
+                auto updated = getSession();
+                updated.theme = j["theme"].toString().toLowerCase();
+                if (updated.theme.isNotEmpty())
+                {
+                    setSession (updated);
+                    notifyChanged();
+                }
+            }
             if (j["chat"].isArray()) { applyChat (j["chat"]); notifyChanged(); }   // instant chat update
             forcePull = true;
         }

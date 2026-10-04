@@ -15,8 +15,10 @@ DreamShareProcessor::DreamShareProcessor()
 bool DreamShareProcessor::isBusesLayoutSupported (const BusesLayout& l) const
 {
 #if DS_AUDIO_PASSTHROUGH
-    return l.getMainInputChannelSet()  == juce::AudioChannelSet::stereo()
-        && l.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+    const auto input = l.getMainInputChannelSet();
+    const auto output = l.getMainOutputChannelSet();
+    return input == output
+        && (input == juce::AudioChannelSet::mono() || input == juce::AudioChannelSet::stereo());
 #else
     return l.inputBuses.isEmpty() && l.outputBuses.isEmpty();
 #endif
@@ -36,8 +38,8 @@ void DreamShareProcessor::setStateInformation (const void* data, int size)
 {
     if (size < 8) return;
     juce::MemoryInputStream in (data, (size_t) size, false);
-    editorW = juce::jlimit (360, 1000, in.readInt());
-    editorH = juce::jlimit (420, 1200, in.readInt());
+    editorW = juce::jlimit (300, 1000, in.readInt());
+    editorH = juce::jlimit (340, 1200, in.readInt());
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new DreamShareProcessor(); }

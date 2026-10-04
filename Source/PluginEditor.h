@@ -5,7 +5,8 @@
 #include "Theme.h"
 
 class DreamShareEditor : public juce::AudioProcessorEditor,
-                         private ds::Client::Listener
+                         private ds::Client::Listener,
+                         private juce::Timer
 {
 public:
     explicit DreamShareEditor (DreamShareProcessor&);
@@ -21,6 +22,7 @@ private:
     // ds::Client::Listener
     void clientChanged() override;
     void clientStatus (const juce::String&) override;
+    void timerCallback() override;
 
     void setStatus (const juce::String&);
     void refreshAll();
@@ -29,6 +31,8 @@ private:
     void rebuildDetail();
     void updateHeader();
     void updateVisibility();
+    void updateTheme();
+    void selectTheme();
 
     void doLogin();
     void sendChat();
@@ -50,10 +54,15 @@ private:
     Tab tab = Tab::chat;
     TMode tmode = TMode::list;
     juce::String openId;
+    juce::uint32 animationTick = 0;
 
     // header
     juce::Label whoLabel, statusLabel;
     juce::TextButton onlineBtn { "o 0" }, logoutBtn { "Logout" }, chatTab { "Chat" }, threadsTab { "Threads" };
+    juce::ComboBox themeBox;
+    std::vector<ds::ThemeChoice> themeChoices;
+    juce::String appliedTheme;
+    bool syncingThemeBox = false;
 
     // login
     juce::Label loginInfo, loginMsg;
@@ -63,15 +72,18 @@ private:
     // chat
     ds::FeedView chatFeed;
     juce::TextEditor chatInput;
-    juce::TextButton chatEmoji { "" }, chatSend { "Send" };
+    ds::GlyphButton chatEmoji;
+    juce::TextButton chatSend { "Send" };
 
     // threads: list / compose / detail
     ds::FeedView threadFeed, detailFeed;
     juce::TextButton newThreadBtn { "+ New thread" }, backBtn { "< Back" };
     juce::TextEditor composeTitle, composeBody, commentInput;
     juce::Label composeCount;
-    juce::TextButton composeEmoji { "" }, composePost { "Post thread" }, composeCancel { "Cancel" };
-    juce::TextButton commentEmoji { "" }, commentSend { "Reply" };
+    ds::GlyphButton composeEmoji;
+    juce::TextButton composePost { "Post thread" }, composeCancel { "Cancel" };
+    ds::GlyphButton commentEmoji;
+    juce::TextButton commentSend { "Reply" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DreamShareEditor)
 };

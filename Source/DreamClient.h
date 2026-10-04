@@ -20,17 +20,22 @@ namespace ds
 
     struct Session
     {
-        juce::String user, role, token;
+        juce::String user, role, token, theme;
         bool valid() const { return user.isNotEmpty() && token.isNotEmpty(); }
     };
+
+    struct ThemeChoice { juce::String id, name; };
+    struct CustomRole { juce::String label, color, bg; };
 
     // Immutable copy of the last feed pull. Shared with the UI via shared_ptr.
     struct Snapshot
     {
         std::vector<Topic>   threads;
         std::vector<ChatMsg> chat;
+        std::vector<ThemeChoice> themes;
         juce::StringArray    mods, supers, online;
         std::map<juce::String, juce::StringArray> roles;   // key = lower-case username
+        std::map<juce::String, CustomRole> customRoles;    // key = lower-case username
 
         bool isSuper  (const juce::String& u) const { return supers.contains (u, true); }
         bool isMod    (const juce::String& u) const { return isSuper (u) || mods.contains (u, true); }

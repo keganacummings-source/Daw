@@ -2,9 +2,9 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "DreamClient.h"
 
-// Build with -DDS_AUDIO_PASSTHROUGH=ON if your DAW refuses to load a plugin that has no audio I/O.
+// The compatibility build provides stereo I/O and leaves audio untouched.
 #ifndef DS_AUDIO_PASSTHROUGH
- #define DS_AUDIO_PASSTHROUGH 0
+ #define DS_AUDIO_PASSTHROUGH 1
 #endif
 
 class DreamShareProcessor : public juce::AudioProcessor
