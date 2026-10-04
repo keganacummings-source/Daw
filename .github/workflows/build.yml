@@ -18,14 +18,19 @@ jobs:
         with:
           node-version: 20
 
-      - name: Build package
-        shell: pwsh
-        run: .\build.ps1
+      - name: Check Worker syntax
+        run: node --check src/worker.js
 
-      - name: Upload release artifact
+      - name: Configure JUCE plugin
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build VST3
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload VST3 and Worker source
         uses: actions/upload-artifact@v4
         with:
           name: DreamShare-Windows-VST3
           path: |
-            dist/*.zip
-            dist/*.sha256
+            build/DreamShareLite_artefacts/Release/VST3/
+            src/worker.js

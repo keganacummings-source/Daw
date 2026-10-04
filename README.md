@@ -1,53 +1,51 @@
-# DreamShare VST3 + Worker — GitHub Build
+# DreamShare Lite (VST3)
 
-This repository is the GitHub-ready packaging/update for DreamShare VST3 and its Cloudflare Worker compatibility patch.
+A small chat client for Dreamdaw's DreamShare, as a plugin. It has **no audio and no MIDI buses**;
+it talks to the Cloudflare Worker API used by `DREAMSHARELITE.html`
+(`https://dreamshare-api.keganacummings.workers.dev/`, set in `Source/DreamClient.cpp`).
 
-## What the build does
+## What it does
+- **Chat**: live room (last 100 messages), send, delete your own lines (mods can delete any).
+- **Threads**: browse, post a thread (120-char title, 1000-char body), open a thread, reply (500 chars), delete.
+- **Reactions**: the same 8 the server allows (thumbs up, heart, fire, laugh, skull, moon, eyes, 100) on chat lines, threads and comments. Click a chip to toggle, `+` to pick.
+- **Emoji posting**: emoji button next to every text box inserts emoji into your message.
+- **Themes**: choose from the 16 Dreamdaw themes in the dropdown. The selected theme is saved to the account and applied to the native plugin palette.
+- **Roles**: ADMIN / MOD / KYOTO and custom-tag badges next to names. Mods/admins can manage Kyoto and delete chat lines; only Trippah/Goonr can manage custom tags and promote/remove mods.
+- **Online list**: click the `● N` button.
+- **Login**: same accounts as the website. A new name creates an account (that is how the worker behaves).
 
-`build.ps1`:
+## Lightweight by design
+- No web view. Native JUCE drawing, one shared network thread for all plugin instances.
+- Polls every 8 s (presence every 20 s) **only while a plugin window is open**. Closed window = zero traffic.
+- The session token is saved to `DreamShareLite/session.json` in your user app-data folder, not in DAW projects.
+- The editor can be resized down to 300 x 340 pixels.
 
-1. Validates that Node.js is available.
-2. Syntax-checks `src/worker.js` with `node --check`.
-3. Reads the VST `moduleinfo.json` and verifies the product is `DreamShare`.
-4. Stages the VST3 package and Worker into `dist/`.
-5. Creates `DreamShare-Windows-VST3-0.2.1.zip`.
-6. Writes a SHA-256 checksum beside the ZIP.
-7. Optionally deploys the Worker with Wrangler when `-DeployWorker` is supplied.
+## Build
+Needs CMake 3.22+ and a C++17 compiler. JUCE 8.0.6 is downloaded automatically.
 
-## Build on Windows
+    cmake -B build -DCMAKE_BUILD_TYPE=Release
+    cmake --build build --config Release
 
-Open PowerShell in the repository root and run:
+Output: `build/DreamShareLite_artefacts/Release/VST3/DreamShare Lite.vst3`
 
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\build.ps1
-```
+The GitHub Actions workflow syntax-checks `src/worker.js`, compiles the VST3 from the JUCE source,
+and publishes the Windows VST3 and Worker source as a downloadable artifact.
 
-The release ZIP will be in `dist\`.
+Install: Windows `C:\Program Files\Common Files\VST3` · macOS `~/Library/Audio/Plug-Ins/VST3` · Linux `~/.vst3`
 
-### Build and deploy the Worker
+## If your DAW won't load it
+Some hosts (Ableton Live especially) only list plugins that have audio I/O. Configure with
+`-DDS_AUDIO_PASSTHROUGH=ON` to add a stereo pass-through that leaves audio untouched.
 
-Install/authenticate Wrangler first if it is not already available:
+## Notes
+- JUCE is AGPLv3 / commercial. Distributing this plugin means publishing its source (or holding a JUCE licence).
+- macOS: unsigned builds may need `xattr -dr com.apple.quarantine "DreamShare Lite.vst3"`.
+- Emoji are drawn by the OS font: colour on Windows/macOS, depends on installed fonts on Linux.
+- Some DAWs grab keyboard input before plugin text boxes get it. This affects every plugin with a text field, not just this one.
+- Audio tapes attached to threads are shown as a "has audio" tag; playing/uploading WAVs is not part of Lite.
 
-```powershell
-npm install -g wrangler
-wrangler login
-```
-
-Then:
-
-```powershell
-.\build.ps1 -DeployWorker
-```
-
-The script deploys `src/worker.js` using the Wrangler configuration in `wrangler.toml`.
-
-## Important VST limitation
-
-The supplied VST3 is a compiled Windows x64 binary. The original JUCE/C++ source was not included, so this repository cannot truthfully rebuild native VST controls/effects that are absent from that binary. The build script therefore packages the supplied VST3 unchanged and applies the Worker-side compatibility patch.
-
-If you later add the original JUCE/C++ project, the build script can be extended to compile the VST instead of packaging the supplied binary.
-
-## Cloudflare configuration
-
-The Worker source already contains the DreamShare theme/session/custom-role API compatibility implemented by patch 0.2.1. `wrangler.toml` is intentionally minimal; keep your existing Cloudflare bindings/secrets in your deployment configuration rather than committing credentials.
+## Worker
+`src/worker.js` provides the shared account, theme preference, feed, role, custom-tag, and presence
+APIs. Theme selection and custom-tag controls in the VST call these existing APIs. Worker deployment
+is separate from building the VST; do not deploy a Worker unless the Cloudflare account and bindings
+have been verified.
