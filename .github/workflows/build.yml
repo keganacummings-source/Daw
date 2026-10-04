@@ -21,6 +21,9 @@ jobs:
       - name: Check Worker syntax
         run: node --check src/worker.js
 
+      - name: Test Worker API
+        run: node --test
+
       - name: Configure JUCE plugin
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 

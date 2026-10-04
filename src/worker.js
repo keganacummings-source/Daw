@@ -58,6 +58,7 @@
  *   set_role | clear_role
  *   set_custom_role | clear_custom_role   (Trippah/Goonr only — collective badge)
  *   presence|heartbeat
+ *   plugin_capabilities → { fxBuilder, themes } for authenticated native clients
  *
  * Theme patch compatibility:
  *   set_theme/theme, session/whoami/me, login themePack/themes
@@ -1077,6 +1078,16 @@ export default {
       // Shared auth for web iframe + DreamShare Lite VST
       if (!sess) return json({ ok: false, error: 'Login required', code: 'auth' }, 401);
       const user = sess.user;
+
+      if (action === 'plugin_capabilities') {
+        return json({
+          ok: true,
+          capabilities: {
+            fxBuilder: true,
+            themes: THEME_IDS.slice()
+          }
+        });
+      }
 
       // Lightweight session check (VST / homepage can refresh role + user)
       if (action === 'session' || action === 'whoami' || action === 'me') {

@@ -49,3 +49,10 @@ Some hosts (Ableton Live especially) only list plugins that have audio I/O. Conf
 APIs. Theme selection and custom-tag controls in the VST call these existing APIs. Worker deployment
 is separate from building the VST; do not deploy a Worker unless the Cloudflare account and bindings
 have been verified.
+
+Authenticated native clients can POST `{"action":"plugin_capabilities","token":"<session token>"}`
+to `/` to receive `{"ok":true,"capabilities":{"fxBuilder":true,"themes":[...]}}`. `themes` contains
+the 16 theme IDs returned by the Worker catalog. The action uses the normal 30-day session
+validation and returns the standard `401` auth error for missing, invalid, or expired sessions.
+These are product capabilities for every logged-in account, not paid-entitlement flags. The public
+feed remains unauthenticated and does not expose this account-only capability response.
