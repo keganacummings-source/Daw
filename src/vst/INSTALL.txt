@@ -1,0 +1,8 @@
+DreamShare Windows VST3
+
+Install the built DreamShare.vst3 folder into:
+C:\Program Files\Common Files\VST3\
+
+This repository packages the supplied compiled Windows x64 VST3 binary.
+The native VST binary is not rebuilt by this repository because the original
+JUCE/C++ project source was not included with the supplied release.
