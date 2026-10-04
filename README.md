@@ -1,6 +1,7 @@
 # DreamShare Lite (VST3)
 
-A small chat client for Dreamdaw's DreamShare, as a plugin. It has **no audio and no MIDI buses**;
+A small chat client for Dreamdaw's DreamShare, as a plugin. It has **no MIDI** and passes stereo
+audio through untouched for compatibility with DAWs that require audio I/O;
 it talks to the Cloudflare Worker API used by `DREAMSHARELITE.html`
 (`https://dreamshare-api.keganacummings.workers.dev/`, set in `Source/DreamClient.cpp`).
 
@@ -34,8 +35,9 @@ and publishes the Windows VST3 and Worker source as a downloadable artifact.
 Install: Windows `C:\Program Files\Common Files\VST3` · macOS `~/Library/Audio/Plug-Ins/VST3` · Linux `~/.vst3`
 
 ## If your DAW won't load it
-Some hosts (Ableton Live especially) only list plugins that have audio I/O. Configure with
-`-DDS_AUDIO_PASSTHROUGH=ON` to add a stereo pass-through that leaves audio untouched.
+The standard build includes stereo input/output buses because some hosts (including Ableton Live)
+may reject plugins with no audio I/O. Audio is passed through unchanged. To build without audio
+buses, configure with `-DDS_AUDIO_PASSTHROUGH=OFF`; hosts that require audio I/O may not load that build.
 
 ## Notes
 - JUCE is AGPLv3 / commercial. Distributing this plugin means publishing its source (or holding a JUCE licence).

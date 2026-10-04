@@ -22,7 +22,7 @@ jobs:
         run: node --check src/worker.js
 
       - name: Configure JUCE plugin
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DDS_AUDIO_PASSTHROUGH=ON
 
       - name: Build VST3
         run: cmake --build build --config Release --parallel

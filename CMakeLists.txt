@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(DreamShareLite VERSION 0.3.0 LANGUAGES C CXX)
+project(DreamShareLite VERSION 0.3.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,7 +10,7 @@ if(MSVC)
 endif()
 
 option(DS_AUDIO_PASSTHROUGH
-       "Add a stereo in/out that passes audio through untouched (only if your DAW refuses plugins with no audio I/O)" OFF)
+       "Add a stereo in/out that passes audio through untouched for broader DAW compatibility" ON)
 
 include(FetchContent)
 FetchContent_Declare(JUCE

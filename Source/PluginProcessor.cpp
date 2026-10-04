@@ -15,8 +15,10 @@ DreamShareProcessor::DreamShareProcessor()
 bool DreamShareProcessor::isBusesLayoutSupported (const BusesLayout& l) const
 {
 #if DS_AUDIO_PASSTHROUGH
-    return l.getMainInputChannelSet()  == juce::AudioChannelSet::stereo()
-        && l.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+    const auto input = l.getMainInputChannelSet();
+    const auto output = l.getMainOutputChannelSet();
+    return input == output
+        && (input == juce::AudioChannelSet::mono() || input == juce::AudioChannelSet::stereo());
 #else
     return l.inputBuses.isEmpty() && l.outputBuses.isEmpty();
 #endif
