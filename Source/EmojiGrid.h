@@ -48,6 +48,29 @@ namespace ds
         return p;
     }
 
+    /** Button that paints its emoji itself. (JUCE's TextButton swaps wide emoji for "..." .) */
+    class GlyphButton : public juce::Button
+    {
+    public:
+        explicit GlyphButton (const juce::String& g = {}) : juce::Button ("emoji"), glyph (g) {}
+        void setGlyph (const juce::String& g) { glyph = g; repaint(); }
+
+        void paintButton (juce::Graphics& g, bool over, bool down) override
+        {
+            auto r = getLocalBounds().toFloat().reduced (0.5f);
+            g.setColour (down ? juce::Colour (0xff3a1418) : over ? juce::Colour (0xff2a1820) : juce::Colour (0xff1a1216));
+            g.fillRoundedRectangle (r, 6.0f);
+            g.setColour (theme::border);
+            g.drawRoundedRectangle (r, 6.0f, 1.0f);
+            g.setColour (theme::text);
+            g.setFont (theme::font (18.0f));
+            g.drawText (glyph, getLocalBounds(), juce::Justification::centred, false);
+        }
+
+    private:
+        juce::String glyph;
+    };
+
     /** Small grid of emoji buttons for use inside a CallOutBox. */
     class EmojiGrid : public juce::Component
     {
@@ -59,7 +82,7 @@ namespace ds
             const int rows = ((int) items.size() + cols - 1) / cols;
             for (size_t i = 0; i < items.size(); ++i)
             {
-                auto* b = buttons.add (new juce::TextButton (items[i].second));
+                auto* b = buttons.add (new GlyphButton (items[i].second));
                 b->setBounds (6 + ((int) i % cols) * cell, 6 + ((int) i / cols) * cell, cell - 2, cell - 2);
                 const auto key = items[i].first, glyph = items[i].second;
                 b->onClick = [this, pick, key, glyph]
@@ -73,6 +96,6 @@ namespace ds
         }
 
     private:
-        juce::OwnedArray<juce::TextButton> buttons;
+        juce::OwnedArray<GlyphButton> buttons;
     };
 }

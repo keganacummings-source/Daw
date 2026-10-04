@@ -82,7 +82,7 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
 
     // emoji buttons
     for (auto* b : { &chatEmoji, &composeEmoji, &commentEmoji })
-        b->setButtonText (T::cp ({ 0x1F600 }));
+        b->setGlyph (T::cp ({ 0x1F600 }));
     chatEmoji.onClick    = [this] { pickEmoji (chatInput, chatEmoji); };
     composeEmoji.onClick = [this] { pickEmoji (composeBody, composeEmoji); };
     commentEmoji.onClick = [this] { pickEmoji (commentInput, commentEmoji); };
@@ -103,10 +103,10 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     styleEditor (commentInput, "Write a reply...", 500, false);
     composeCount.setFont (T::font (11.0f));
     composeCount.setColour (juce::Label::textColourId, T::dim);
-    composeCount.setText ("0/120 \xc2\xb7 0/1000", juce::dontSendNotification);
+    composeCount.setText ("0/120 " + T::cp ({ 0xB7 }) + " 0/1000", juce::dontSendNotification);
     auto upd = [this]
     {
-        composeCount.setText (juce::String (composeTitle.getText().length()) + "/120 \xc2\xb7 "
+        composeCount.setText (juce::String (composeTitle.getText().length()) + "/120 " + T::cp ({ 0xB7 }) + " "
                               + juce::String (composeBody.getText().length()) + "/1000", juce::dontSendNotification);
     };
     composeTitle.onTextChange = upd;
@@ -290,8 +290,8 @@ void DreamShareEditor::rebuildThreadList()
             Item it;
             it.kind = "thread";  it.id = t.id;  it.threadId = t.id;  it.user = t.user;
             it.title = t.title.isNotEmpty() ? t.title : "untitled";
-            it.meta = juce::String ((int) t.comments.size()) + " comments \xc2\xb7 " + when (t.at)
-                      + (t.hasAudio ? " \xc2\xb7 has audio (play on dreamdaw.com)" : "");
+            it.meta = juce::String ((int) t.comments.size()) + " comments " + T::cp ({ 0xB7 }) + " " + when (t.at)
+                      + (t.hasAudio ? " " + T::cp ({ 0xB7 }) + " has audio (play on dreamdaw.com)" : juce::String());
             it.body = t.text.length() > 140 ? t.text.substring (0, 140) + "..." : t.text;
             it.reactions = t.reactions;  it.me = me.user;
             if (snap->inChat (t.user)) it.badges = badgesFor (*snap, t.user);
@@ -324,7 +324,7 @@ void DreamShareEditor::rebuildDetail()
     Item head;
     head.kind = "thread";  head.id = topic->id;  head.threadId = topic->id;  head.user = topic->user;
     head.title = topic->title.isNotEmpty() ? topic->title : "untitled";
-    head.meta = when (topic->at) + (topic->hasAudio ? " \xc2\xb7 has audio (play on dreamdaw.com)" : "");
+    head.meta = when (topic->at) + (topic->hasAudio ? " " + T::cp ({ 0xB7 }) + " has audio (play on dreamdaw.com)" : juce::String());
     head.body = topic->text;  head.reactions = topic->reactions;  head.me = me.user;
     if (snap->inChat (topic->user)) head.badges = badgesFor (*snap, topic->user);
     head.canDelete = me.valid() && (mod || topic->user.equalsIgnoreCase (me.user));

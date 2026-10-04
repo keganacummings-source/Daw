@@ -268,7 +268,7 @@ void Client::pull()
 
     { const juce::ScopedLock sl (lock); snapshot = s; }
     notifyChanged();
-    notifyStatus ("Live \xc2\xb7 online " + juce::String (online.size()));
+    notifyStatus ("Live " + juce::String::charToString (0xB7) + " online " + juce::String (online.size()));
 }
 
 void Client::beat()

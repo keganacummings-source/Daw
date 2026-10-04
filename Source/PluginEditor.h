@@ -63,15 +63,18 @@ private:
     // chat
     ds::FeedView chatFeed;
     juce::TextEditor chatInput;
-    juce::TextButton chatEmoji { "" }, chatSend { "Send" };
+    ds::GlyphButton chatEmoji;
+    juce::TextButton chatSend { "Send" };
 
     // threads: list / compose / detail
     ds::FeedView threadFeed, detailFeed;
     juce::TextButton newThreadBtn { "+ New thread" }, backBtn { "< Back" };
     juce::TextEditor composeTitle, composeBody, commentInput;
     juce::Label composeCount;
-    juce::TextButton composeEmoji { "" }, composePost { "Post thread" }, composeCancel { "Cancel" };
-    juce::TextButton commentEmoji { "" }, commentSend { "Reply" };
+    ds::GlyphButton composeEmoji;
+    juce::TextButton composePost { "Post thread" }, composeCancel { "Cancel" };
+    ds::GlyphButton commentEmoji;
+    juce::TextButton commentSend { "Reply" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DreamShareEditor)
 };
