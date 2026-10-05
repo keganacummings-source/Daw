@@ -1,0 +1,98 @@
+name: Build DreamShare VST3
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - keganacummings-source-dreamsharelite-update
+
+  pull_request:
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: Windows
+
+          - os: macos-latest
+            artifact: macOS
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check Worker syntax
+        run: node --check src/worker.js
+
+      - name: Configure JUCE plugin - Windows
+        if: runner.os == 'Windows'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DDS_AUDIO_PASSTHROUGH=ON
+
+      - name: Configure JUCE plugin - macOS
+        if: runner.os == 'macOS'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DDS_AUDIO_PASSTHROUGH=ON "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+
+      - name: Build VST3
+        run: cmake --build build --config Release --parallel
+
+      - name: Verify macOS Universal VST3
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+
+          VST3_BUNDLE="$(find build/DreamShareLite_artefacts/Release/VST3 -type d -name '*.vst3' -print -quit)"
+
+          if [ -z "$VST3_BUNDLE" ]; then
+            echo "ERROR: No VST3 bundle was produced."
+            exit 1
+          fi
+
+          echo "Found: $VST3_BUNDLE"
+
+          VST3_BINARY="$(find "$VST3_BUNDLE" -type f -perm +111 | head -n 1)"
+
+          if [ -z "$VST3_BINARY" ]; then
+            echo "ERROR: Could not find VST3 executable."
+            exit 1
+          fi
+
+          echo "Checking architectures:"
+          lipo -info "$VST3_BINARY"
+
+          ARCHS="$(lipo -archs "$VST3_BINARY")"
+
+          echo "$ARCHS" | grep -qw "arm64" || {
+            echo "ERROR: arm64 is missing."
+            exit 1
+          }
+
+          echo "$ARCHS" | grep -qw "x86_64" || {
+            echo "ERROR: x86_64 is missing."
+            exit 1
+          }
+
+          echo "SUCCESS: Universal macOS VST3 contains arm64 and x86_64."
+
+      - name: Upload VST3 and Worker source
+        uses: actions/upload-artifact@v4
+        with:
+          name: DreamShare-${{ matrix.artifact }}-VST3
+          path: |
+            build/DreamShareLite_artefacts/Release/VST3/
+            src/worker.js
+          if-no-files-found: error
