@@ -1,0 +1,18 @@
+DreamShareLite 0.4.0 — VST3 Build Fix
+
+Fixed against the GitHub Actions/MSVC errors from the supplied build log:
+
+1. DreamClient.cpp
+   - Constructed juce::URL::InputStreamOptions with ParameterHandling::inAddress.
+
+2. FeedView.cpp/.h
+   - Declared layoutDirty/lastLayoutWidth/lastVisibleHeight.
+   - Added layout caching guard.
+   - Replaced deprecated setScrollOnDragEnabled(true) with setScrollOnDragMode(ScrollOnDragMode::all).
+
+3. PluginEditor.cpp/.h
+   - Replaced synchronous FileChooser browseForFileToOpen/browseForFileToSave calls with JUCE asynchronous launchAsync calls.
+   - Added a persistent FileChooser member so callbacks remain valid.
+   - Updated WAV sharing, private WAV saving, and approved WAV export selection.
+
+The supplied CI log showed CMake/JUCE configuration and MSVC initialization succeeding; compilation failed only at these source-level errors.

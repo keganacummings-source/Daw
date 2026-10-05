@@ -1,0 +1,7 @@
+name = "dreamshare-api"
+main = "src/worker.js"
+compatibility_date = "2026-10-03"
+
+# Keep production bindings/secrets in your Cloudflare project.
+# Add your existing KV/R2/Durable Object bindings here if your account's
+# current Worker configuration requires them. Do not commit credentials.
