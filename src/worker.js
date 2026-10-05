@@ -75,7 +75,7 @@ const STORAGE = 'durable-v4';
 // consume the same payload. The binary in the supplied ZIP does not contain
 // the source needed to add a native theme dropdown/effects renderer.
 const THEME_API_VERSION = 'v1';
-const VST_PATCH_VERSION = '0.2.1';
+const VST_PATCH_VERSION = '0.4.0';
 const VST_RELEASE = {
   version: '0.2.1',
   name: 'DreamShare-Windows-VST3.zip',
@@ -204,6 +204,7 @@ async function readAccounts(env) {
   if (!j || typeof j !== 'object') j = {};
   if (!j.users || typeof j.users !== 'object') j.users = {};
   if (!j.sessions || typeof j.sessions !== 'object') j.sessions = {};
+  ensureSocial(j);
   return j;
 }
 
@@ -211,6 +212,7 @@ async function writeAccounts(env, data) {
   const payload = JSON.stringify({
     users: data.users || {},
     sessions: data.sessions || {},
+    social: data.social || {},
     storage: 'accounts-v1',
     updated: Date.now()
   });
@@ -227,6 +229,59 @@ async function writeAccounts(env, data) {
     body: payload
   });
   if (!r.ok && !kvOk) throw new Error('accounts save ' + r.status);
+}
+
+
+function ensureSocial(db) {
+  if (!db.social || typeof db.social !== 'object') db.social = {};
+  if (!db.social.users || typeof db.social.users !== 'object') db.social.users = {};
+  return db.social;
+}
+function socialUser(db, user) {
+  const s = ensureSocial(db);
+  const key = String(user || '').toLowerCase();
+  if (!s.users[key] || typeof s.users[key] !== 'object') {
+    s.users[key] = { friends: [], incoming: [], outgoing: [], dms: [], wavRequests: [] };
+  }
+  const u = s.users[key];
+  if (!Array.isArray(u.friends)) u.friends = [];
+  if (!Array.isArray(u.incoming)) u.incoming = [];
+  if (!Array.isArray(u.outgoing)) u.outgoing = [];
+  if (!Array.isArray(u.dms)) u.dms = [];
+  if (!Array.isArray(u.wavRequests)) u.wavRequests = [];
+  return u;
+}
+function cleanName(x) { return normUser(x).slice(0, 20); }
+function socialMessageId() { return 'dm' + Date.now() + Math.floor(Math.random() * 999); }
+function socialRequestId(prefix) { return String(prefix || 'rq') + Date.now() + Math.floor(Math.random() * 999); }
+function accountExists(db, name) {
+  const n = cleanName(name);
+  return !!(n && db.users && db.users[n.toLowerCase()]);
+}
+function addUniqueName(arr, name) {
+  const n = cleanName(name);
+  if (!n) return;
+  if (!arr.some(x => String(x).toLowerCase() === n.toLowerCase())) arr.push(n);
+}
+function removeName(arr, name) {
+  return (arr || []).filter(x => String(x).toLowerCase() !== String(name || '').toLowerCase());
+}
+function addDm(db, from, to, message) {
+  const a = socialUser(db, from), b = socialUser(db, to);
+  const m = Object.assign({ id: socialMessageId(), from: cleanName(from), to: cleanName(to), at: Date.now() }, message || {});
+  a.dms.push(m); b.dms.push(m);
+  a.dms = a.dms.slice(-200); b.dms = b.dms.slice(-200);
+  return m;
+}
+function privateDmList(db, a, b) {
+  const u = socialUser(db, a);
+  return u.dms.filter(m =>
+    (String(m.from).toLowerCase() === String(a).toLowerCase() && String(m.to).toLowerCase() === String(b).toLowerCase()) ||
+    (String(m.from).toLowerCase() === String(b).toLowerCase() && String(m.to).toLowerCase() === String(a).toLowerCase())
+  ).slice(-100);
+}
+function socialDirectory(db) {
+  return Object.keys(db.users || {}).map(k => db.users[k] && db.users[k].name).filter(Boolean).sort((a,b)=>String(a).localeCompare(String(b))).slice(0, 500);
 }
 
 async function loginAccount(env, body) {
@@ -888,6 +943,29 @@ async function handleAudioPart(request, env) {
   }
   return json({ ok: true, sink: sink, upload: upload, index: index, parts: parts, audioMaxBytes: MAX_AUDIO_BYTES });
 }
+async function handleAudioPartB64(env, body, user) {
+  const upload = String(body.upload || '').replace(/[^A-Za-z0-9_\-]/g, '').slice(0, 48);
+  const index = parseInt(body.index, 10), parts = parseInt(body.parts, 10);
+  const b64 = String(body.b64 || '').replace(/\s/g, '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9_\-]{3,47}$/.test(upload)) return { ok:false, error:'bad upload' };
+  if (!Number.isFinite(index) || index < 0 || index > 49 || !Number.isFinite(parts) || parts < 1 || parts > 50 || index >= parts)
+    return { ok:false, error:'bad part' };
+  if (!b64 || b64.length > 3000000) return { ok:false, error:'audio piece too large' };
+  const sink = audioSink(env);
+  if (sink === 'bin') return { ok:false, error:'Bind DREAMSHARE_R2 or DREAMSHARE_KV for WAV sharing', code:'no-sink' };
+  let bytes;
+  try { bytes = b64ToBytes(b64); } catch (_) { return { ok:false, error:'bad audio encoding' }; }
+  if (bytes.byteLength > 2200000) return { ok:false, error:'audio piece too large' };
+  const key = sink === 'r2' ? ('wav/' + upload + '/' + index) : ('wav:' + upload + ':' + index);
+  try {
+    if (sink === 'r2') await env.DREAMSHARE_R2.put(key, bytes, { httpMetadata:{ contentType:'audio/wav' } });
+    else await env.DREAMSHARE_KV.put(key, bytes);
+  } catch (err) {
+    return { ok:false, error:'tape store failed: ' + String(err && err.message || err) };
+  }
+  return { ok:true, sink:sink, upload:upload, index:index, parts:parts, audioMaxBytes:MAX_AUDIO_BYTES };
+}
+
 
 export default {
   async fetch(request, env) {
@@ -960,6 +1038,38 @@ export default {
     }
 
     if (method === 'GET' || method === 'HEAD') {
+
+      const dmWavId = String(url.searchParams.get('dmwav') || '').replace(/[^A-Za-z0-9_\-]/g, '').slice(0, 64);
+      if (dmWavId) {
+        try {
+          const token = String(url.searchParams.get('token') || '');
+          const sess = await sessionFromBody(env, { token: token }, request);
+          if (!sess) return json({ ok:false, error:'Login required', code:'auth' }, 401);
+          const db = await readAccounts(env);
+          const me = socialUser(db, sess.user);
+          const msg = me.dms.find(m => m && m.id === dmWavId && m.audioUpload);
+          if (!msg) return json({ ok:false, error:'private wav missing' }, 404);
+          const other = String(msg.from).toLowerCase() === sess.user.toLowerCase() ? msg.to : msg.from;
+          if (String(msg.from).toLowerCase() !== sess.user.toLowerCase() && String(msg.to).toLowerCase() !== sess.user.toLowerCase())
+            return json({ ok:false, error:'not allowed' }, 403);
+          const sink = msg.audioStore || audioSink(env);
+          const part = parseInt(url.searchParams.get('part') || '0', 10);
+          if (!Number.isFinite(part) || part < 0 || part >= (parseInt(msg.audioParts,10)||0))
+            return json({ ok:false, error:'wav piece missing' }, 404);
+          const key = sink === 'r2' ? ('wav/' + msg.audioUpload + '/' + part) : ('wav:' + msg.audioUpload + ':' + part);
+          if (sink === 'r2') {
+            if (!env || !env.DREAMSHARE_R2) return json({ok:false,error:'R2 not bound'},502);
+            const obj = await env.DREAMSHARE_R2.get(key);
+            if (!obj) return json({ok:false,error:'wav piece missing'},404);
+            return new Response(obj.body,{status:200,headers:Object.assign({},CORS,{'Content-Type':msg.audioMime||'audio/wav','Cache-Control':'private, max-age=3600'})});
+          }
+          if (!env || !env.DREAMSHARE_KV) return json({ok:false,error:'KV not bound'},502);
+          const bytes = await env.DREAMSHARE_KV.get(key,'arrayBuffer');
+          if (!bytes) return json({ok:false,error:'wav piece missing'},404);
+          return new Response(bytes,{status:200,headers:Object.assign({},CORS,{'Content-Type':msg.audioMime||'audio/wav','Cache-Control':'private, max-age=3600'})});
+        } catch (err) { return json({ok:false,error:'private wav read failed'},502); }
+      }
+
       const wavId = String(url.searchParams.get('wav') || '').replace(/[^A-Za-z0-9_\-]/g, '').slice(0, 48);
       if (wavId) {
         try {
@@ -1077,6 +1187,92 @@ export default {
       // Shared auth for web iframe + DreamShare Lite VST
       if (!sess) return json({ ok: false, error: 'Login required', code: 'auth' }, 401);
       const user = sess.user;
+
+
+      // ---- Private social layer: friends, DMs and approval-based WAV requests ----
+      if (action === 'social_list' || action === 'friends_list') {
+        const db = await readAccounts(env), me = socialUser(db, user);
+        return json({ ok:true, storage:STORAGE, user:user, friends:me.friends, incoming:me.incoming.slice(-50),
+          outgoing:me.outgoing.slice(-50), wavRequests:me.wavRequests.slice(-50), directory:socialDirectory(db) });
+      }
+      if (action === 'friend_request') {
+        const target = cleanName(body.target || body.to);
+        if (!accountExists(await readAccounts(env), target)) return json({ok:false,error:'User not found'},404);
+        if (target.toLowerCase() === user.toLowerCase()) return json({ok:false,error:'You cannot friend yourself'},400);
+        const db = await readAccounts(env), me = socialUser(db,user), them = socialUser(db,target);
+        if (me.friends.some(x=>x.toLowerCase()===target.toLowerCase())) return json({ok:true,status:'friends'});
+        if (!them.incoming.some(x=>x.from.toLowerCase()===user.toLowerCase() && x.status==='pending')) {
+          them.incoming.push({id:socialRequestId('fr'),from:user,to:target,at:Date.now(),status:'pending'});
+          me.outgoing.push({id:them.incoming[them.incoming.length-1].id,from:user,to:target,at:Date.now(),status:'pending'});
+          them.incoming=them.incoming.slice(-100); me.outgoing=me.outgoing.slice(-100);
+        }
+        await writeAccounts(env,db); return json({ok:true,status:'pending',target:target});
+      }
+      if (action === 'friend_accept' || action === 'friend_decline') {
+        const id=String(body.requestId||body.id||'').replace(/[^A-Za-z0-9_\-]/g,'').slice(0,64);
+        const db=await readAccounts(env), me=socialUser(db,user);
+        const req=me.incoming.find(x=>x.id===id);
+        if(!req) return json({ok:false,error:'Friend request not found'},404);
+        const sender=socialUser(db,req.from);
+        me.incoming=me.incoming.filter(x=>x.id!==id);
+        sender.outgoing=sender.outgoing.filter(x=>x.id!==id);
+        if(action==='friend_accept'){ addUniqueName(me.friends,req.from); addUniqueName(sender.friends,user); }
+        await writeAccounts(env,db); return json({ok:true,status:action==='friend_accept'?'friends':'declined'});
+      }
+      if (action === 'friend_remove') {
+        const target=cleanName(body.target||body.to), db=await readAccounts(env), me=socialUser(db,user), them=socialUser(db,target);
+        me.friends=removeName(me.friends,target); them.friends=removeName(them.friends,user);
+        await writeAccounts(env,db); return json({ok:true,status:'removed'});
+      }
+      if (action === 'dm_list') {
+        const peer=cleanName(body.peer||body.to);
+        const db=await readAccounts(env);
+        if(!accountExists(db,peer)) return json({ok:false,error:'User not found'},404);
+        return json({ok:true,peer:peer,messages:privateDmList(db,user,peer),friends:socialUser(db,user).friends});
+      }
+      if (action === 'dm_send' || action === 'dm') {
+        const peer=cleanName(body.to||body.peer||body.target), text=String(body.text||body.message||'').slice(0,1000).trim();
+        const db=await readAccounts(env);
+        if(!accountExists(db,peer)) return json({ok:false,error:'User not found'},404);
+        if(!text && !body.audioUpload) return json({ok:false,error:'empty message'},400);
+        const msg=addDm(db,user,peer,{text:text,audioId:body.audioId||null,audioUrl:null,audioStore:body.audioStore||'',audioUpload:String(body.audioUpload||'').slice(0,48),audioParts:Math.max(0,parseInt(body.audioParts,10)||0),audioBytes:Math.max(0,parseInt(body.audioBytes,10)||0),audioMime:String(body.audioMime||'audio/wav').slice(0,40)});
+        await writeAccounts(env,db); return json({ok:true,message:msg,messages:privateDmList(db,user,peer)});
+      }
+      if (action === 'wav_request') {
+        const target=cleanName(body.target||body.to||body.user), db=await readAccounts(env);
+        if(!accountExists(db,target)) return json({ok:false,error:'User not found'},404);
+        if(target.toLowerCase()===user.toLowerCase()) return json({ok:false,error:'You cannot request your own WAV'},400);
+        const recipient=socialUser(db,target), me=socialUser(db,user);
+        const rq={id:socialRequestId('wav'),from:user,to:target,at:Date.now(),status:'pending',source:String(body.source||'dm').slice(0,8),note:String(body.note||'').slice(0,300)};
+        recipient.wavRequests.push(rq); me.wavRequests.push(rq); recipient.wavRequests=recipient.wavRequests.slice(-100); me.wavRequests=me.wavRequests.slice(-100);
+        await writeAccounts(env,db); return json({ok:true,request:rq});
+      }
+      if (action === 'wav_request_approve' || action === 'wav_request_decline') {
+        const id=String(body.requestId||body.id||'').replace(/[^A-Za-z0-9_\-]/g,'').slice(0,64), db=await readAccounts(env), me=socialUser(db,user);
+        const rq=me.wavRequests.find(x=>x.id===id && String(x.to).toLowerCase()===user.toLowerCase());
+        if(!rq) return json({ok:false,error:'WAV request not found'},404);
+        rq.status=action==='wav_request_approve'?'approved':'declined'; rq.decidedAt=Date.now();
+        const sender=socialUser(db,rq.from), mirror=sender.wavRequests.find(x=>x.id===id); if(mirror){mirror.status=rq.status;mirror.decidedAt=rq.decidedAt;}
+        await writeAccounts(env,db); return json({ok:true,status:rq.status,request:rq});
+      }
+      if (action === 'wav_request_fulfill') {
+        const id=String(body.requestId||body.id||'').replace(/[^A-Za-z0-9_\-]/g,'').slice(0,64), db=await readAccounts(env), me=socialUser(db,user);
+        const rq=me.wavRequests.find(x=>x.id===id && String(x.to).toLowerCase()===user.toLowerCase() && x.status==='approved');
+        if(!rq) return json({ok:false,error:'Approved WAV request not found'},404);
+        if(!body.audioUpload || !parseInt(body.audioParts,10)) return json({ok:false,error:'Attach the approved WAV export first'},400);
+        const msg=addDm(db,user,rq.from,{text:'WAV export for your approved request',requestId:id,audioId:'a'+id,audioStore:body.audioStore,audioUpload:String(body.audioUpload).slice(0,48),audioParts:parseInt(body.audioParts,10),audioBytes:parseInt(body.audioBytes,10)||0,audioMime:String(body.audioMime||'audio/wav').slice(0,40)});
+        rq.status='fulfilled'; rq.fulfilledAt=Date.now();
+        const mirror=socialUser(db,rq.from).wavRequests.find(x=>x.id===id); if(mirror){mirror.status='fulfilled';mirror.fulfilledAt=rq.fulfilledAt;}
+        await writeAccounts(env,db); return json({ok:true,message:msg,request:rq});
+      }
+      if (action === 'wav_request_status') {
+        const db=await readAccounts(env), me=socialUser(db,user);
+        return json({ok:true,requests:me.wavRequests.slice(-100)});
+      }
+      if (action === 'audio_part_b64') {
+        const result=await handleAudioPartB64(env,body,user);
+        return json(result,result.ok?200:(result.code==='no-sink'?400:413));
+      }
 
       // Lightweight session check (VST / homepage can refresh role + user)
       if (action === 'session' || action === 'whoami' || action === 'me') {
