@@ -16,7 +16,7 @@ public:
     void resized() override;
 
 private:
-    enum class Tab   { chat, threads };
+    enum class Tab   { chat, threads, dms };
     enum class TMode { list, compose, detail };
 
     // ds::Client::Listener
@@ -29,6 +29,7 @@ private:
     void rebuildChat();
     void rebuildThreadList();
     void rebuildDetail();
+    void rebuildDms();
     void updateHeader();
     void updateVisibility();
     void updateTheme();
@@ -45,6 +46,10 @@ private:
     void pickEmoji (juce::TextEditor& target, juce::Component& anchor);
     void showUserMenu (const juce::String& name, juce::Point<int> screenPos);
     void showOnline();
+    void selectDmPeer();
+    void sendDm();
+    void showSocialRequests();
+    void chooseWavForRequest (const juce::String& requestId);
     bool canModerate (const ds::Snapshot&, const ds::Session&) const;
 
     DreamShareProcessor& proc;
@@ -58,11 +63,17 @@ private:
 
     // header
     juce::Label whoLabel, statusLabel;
-    juce::TextButton onlineBtn { "o 0" }, logoutBtn { "Logout" }, chatTab { "Chat" }, threadsTab { "Threads" };
+    juce::TextButton onlineBtn { "o 0" }, logoutBtn { "Logout" }, chatTab { "Chat" }, threadsTab { "Threads" }, dmsTab { "DMs" };
     juce::ComboBox themeBox;
     std::vector<ds::ThemeChoice> themeChoices;
     juce::String appliedTheme;
     bool syncingThemeBox = false;
+
+    // DMs
+    ds::FeedView dmFeed;
+    juce::ComboBox dmPeerBox;
+    juce::TextEditor dmInput;
+    juce::TextButton dmSend { "Send" }, dmRequests { "WAV requests" };
 
     // login
     juce::Label loginInfo, loginMsg;
@@ -79,7 +90,9 @@ private:
     ds::FeedView threadFeed, detailFeed;
     juce::TextButton newThreadBtn { "+ New thread" }, backBtn { "< Back" };
     juce::TextEditor composeTitle, composeBody, commentInput;
-    juce::Label composeCount;
+    juce::Label composeCount, composeAudioLabel;
+    juce::TextButton composeAudioBtn { "Attach WAV" };
+    juce::File composeAudioFile;
     ds::GlyphButton composeEmoji;
     juce::TextButton composePost { "Post thread" }, composeCancel { "Cancel" };
     ds::GlyphButton commentEmoji;

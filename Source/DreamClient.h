@@ -17,6 +17,8 @@ namespace ds
     struct Topic    { juce::String id, user, title, text; juce::int64 at = 0; bool hasAudio = false;
                       std::vector<Comment> comments; Reactions reactions; };
     struct ChatMsg  { juce::String id, user, text; juce::int64 at = 0; Reactions reactions; };
+    struct DirectMsg { juce::String id, from, to, text, requestId, audioStore, audioUpload, audioMime; juce::int64 at = 0; int audioParts = 0; juce::int64 audioBytes = 0; };
+    struct SocialRequest { juce::String id, from, to, status, source, note; juce::int64 at = 0; };
 
     struct Session
     {
@@ -33,7 +35,9 @@ namespace ds
         std::vector<Topic>   threads;
         std::vector<ChatMsg> chat;
         std::vector<ThemeChoice> themes;
-        juce::StringArray    mods, supers, online;
+        juce::StringArray    mods, supers, online, directory, friends;
+        std::vector<DirectMsg> dms;
+        std::vector<SocialRequest> friendIncoming, wavRequests;
         std::map<juce::String, juce::StringArray> roles;   // key = lower-case username
         std::map<juce::String, CustomRole> customRoles;    // key = lower-case username
 
@@ -67,10 +71,14 @@ namespace ds
         std::shared_ptr<const Snapshot> getSnapshot() const;
 
         using Done = std::function<void (bool ok, const juce::String& error)>;
+        using UploadDone = std::function<void (bool ok, const juce::String& error, const juce::String& store,
+                                               const juce::String& upload, int parts, juce::int64 bytes)>;
 
         void login (const juce::String& user, const juce::String& pass, Done done);
         void logout();
         void refreshNow();
+        void uploadWav (const juce::File&, UploadDone);
+        void downloadDmWav (const juce::String& messageId, int parts, const juce::File& destination, Done);
         /** Sends an authenticated action (user + token are added automatically). */
         void send (juce::var body, Done done = {});
 

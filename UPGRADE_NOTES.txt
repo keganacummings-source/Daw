@@ -1,0 +1,28 @@
+DreamShare Lite 0.4.0 — UI / Social Overhaul
+
+WHAT CHANGED
+- Native UI redesigned around a compact DREAMDAW-style header and responsive tabs.
+- Added private DMs.
+- Added friend requests / friend removal.
+- Clicking a username now exposes DM, friend, and WAV-request actions.
+- Added approval-based WAV request workflow.
+- Added WAV attachment/upload to thread composer.
+- Added private WAV fulfillment into DMs after approval.
+- Added private WAV save-to-disk from DM attachments.
+- WAV uploads run on the client worker thread in 2 MB chunks, up to 75 MB.
+- Removed continuous animated background repainting from the editor.
+- Feed layout is cached when width/visible-height has not changed, reducing resize stutter.
+- Increased useful resize range and tightened card/scroll geometry.
+
+IMPORTANT
+A generic VST3 cannot force every DAW host to bounce its complete current project.
+The approved WAV request therefore asks the exporting user to choose the WAV their DAW rendered.
+No fake host-export API is used.
+
+WORKER DEPLOY
+Deploy src/worker.js to the existing DreamShare Cloudflare Worker.
+R2 or KV must be bound for large WAV sharing. R2 is recommended.
+
+BUILD
+The included GitHub workflow continues to build Windows and macOS VST3 packages.
+Local build was not possible in this environment because the JUCE 8.0.6 Git dependency could not be downloaded.

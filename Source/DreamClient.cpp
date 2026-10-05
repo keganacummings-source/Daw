@@ -57,6 +57,39 @@ static std::vector<ChatMsg> parseChat (const juce::var& v)
     return out;
 }
 
+
+
+static std::vector<SocialRequest> parseRequests (const juce::var& v)
+{
+    std::vector<SocialRequest> out;
+    if (auto* a=v.getArray()) for(auto& r:*a)
+    {
+        SocialRequest x;
+        x.id=r["id"].toString(); x.from=r["from"].toString(); x.to=r["to"].toString();
+        x.status=r["status"].toString(); x.source=r["source"].toString(); x.note=r["note"].toString();
+        x.at=(juce::int64)r["at"];
+        if(x.id.isNotEmpty()) out.push_back(std::move(x));
+    }
+    return out;
+}
+
+static std::vector<DirectMsg> parseDms (const juce::var& v)
+{
+    std::vector<DirectMsg> out;
+    if (auto* a = v.getArray())
+        for (auto& m : *a)
+        {
+            DirectMsg d;
+            d.id=m["id"].toString(); d.from=m["from"].toString(); d.to=m["to"].toString();
+            d.text=m["text"].toString(); d.requestId=m["requestId"].toString();
+            d.audioStore=m["audioStore"].toString(); d.audioUpload=m["audioUpload"].toString();
+            d.audioMime=m["audioMime"].toString(); d.at=(juce::int64)m["at"];
+            d.audioParts=(int)m["audioParts"]; d.audioBytes=(juce::int64)m["audioBytes"];
+            if (d.id.isNotEmpty()) out.push_back(std::move(d));
+        }
+    return out;
+}
+
 static juce::StringArray parseStrings (const juce::var& v)
 {
     juce::StringArray s;
@@ -268,6 +301,7 @@ void Client::pull()
     s->chat    = parseChat (j["chat"]);
     s->mods    = parseStrings (j["mods"]);
     s->supers  = parseStrings (j["supers"]);
+    s->directory = parseStrings (j["directory"]);
     if (s->supers.isEmpty()) { s->supers.add ("Trippah"); s->supers.add ("Goonr"); }
 
     if (auto* themes = j["themes"].getArray())
@@ -297,6 +331,21 @@ void Client::pull()
     for (auto& m : s->chat)
         if (now - m.at < 180000) online.addIfNotAlreadyThere (m.user, true);
     s->online = online;
+
+    // Private social metadata is deliberately fetched through an authenticated POST;
+    // it is never exposed by the public feed GET.
+    if (currentSession.valid())
+    {
+        juce::var social; juce::String socialErr;
+        auto req = obj({{"action","social_list"}});
+        if (http(true,juce::JSON::toString(req,true),social,socialErr))
+        {
+            s->friends = parseStrings(social["friends"]);
+            s->directory = parseStrings(social["directory"]);
+            s->friendIncoming = parseRequests(social["incoming"]);
+            s->wavRequests = parseRequests(social["wavRequests"]);
+        }
+    }
 
     { const juce::ScopedLock sl (lock); snapshot = s; }
     notifyChanged();
@@ -351,6 +400,85 @@ void Client::logout()
     notifyChanged();
 }
 
+
+void Client::uploadWav (const juce::File& file, UploadDone done)
+{
+    enqueue ([this, file, done]
+    {
+        const auto me = getSession();
+        if (!me.valid()) { juce::MessageManager::callAsync ([done] { if(done) done(false,"Login required",{}, {},0,0); }); return; }
+        if (!file.existsAsFile()) { juce::MessageManager::callAsync ([done] { if(done) done(false,"WAV file not found",{}, {},0,0); }); return; }
+        const auto bytesTotal = file.getSize();
+        constexpr juce::int64 maxBytes = 75LL * 1024LL * 1024LL;
+        if (bytesTotal <= 0 || bytesTotal > maxBytes) {
+            juce::MessageManager::callAsync ([done,bytesTotal,maxBytes] { if(done) done(false, bytesTotal>maxBytes?"WAV is over 75 MB":"Empty WAV",{}, {},0,bytesTotal); });
+            return;
+        }
+        constexpr int chunkBytes = 2000000;
+        const int parts = (int)((bytesTotal + chunkBytes - 1) / chunkBytes);
+        if (parts > 50) { juce::MessageManager::callAsync ([done] { if(done) done(false,"WAV requires too many upload parts",{}, {},0,0); }); return; }
+        const auto upload = "u" + juce::String(juce::Time::currentTimeMillis()) + juce::String(juce::Random::getSystemRandom().nextInt(999));
+        juce::FileInputStream in(file);
+        if (!in.openedOk()) { juce::MessageManager::callAsync ([done] { if(done) done(false,"Could not open WAV",{}, {},0,0); }); return; }
+
+        juce::MemoryBlock block;
+        juce::String sink;
+        for (int i=0; i<parts; ++i)
+        {
+            const int want=(int)juce::jmin<juce::int64>(chunkBytes, bytesTotal-(juce::int64)i*chunkBytes);
+            block.setSize((size_t)want,false);
+            if (in.read(block.getData(),want)!=want) {
+                juce::MessageManager::callAsync ([done] { if(done) done(false,"Could not read WAV",{}, {},0,0); }); return;
+            }
+            const auto b64=juce::Base64::toBase64(block.getData(),block.getSize());
+            auto body=obj({{"action","audio_part_b64"},{"upload",upload},{"index",i},{"parts",parts},{"b64",b64}});
+            juce::var j; juce::String err;
+            if (!http(true,juce::JSON::toString(body,true),j,err) || !(bool)j["ok"]) {
+                if(err.isEmpty()) err=j["error"].toString();
+                juce::MessageManager::callAsync ([done,err] { if(done) done(false,err.isEmpty()?"WAV upload failed":err,{}, {},0,0); });
+                return;
+            }
+            if (sink.isEmpty()) sink = j["sink"].toString();
+        }
+        // The server returns the same storage sink for every part; R2 is preferred.
+        if (sink.isEmpty()) sink = "r2";
+        juce::MessageManager::callAsync ([done,sink,upload,parts,bytesTotal] {
+            if(done) done(true,{},sink,upload,parts,bytesTotal);
+        });
+    });
+}
+
+
+void Client::downloadDmWav (const juce::String& messageId, int parts, const juce::File& destination, Done done)
+{
+    enqueue ([this,messageId,parts,destination,done]
+    {
+        const auto me=getSession();
+        if(!me.valid()){juce::MessageManager::callAsync([done]{if(done)done(false,"Login required");});return;}
+        if(parts<1 || parts>50){juce::MessageManager::callAsync([done]{if(done)done(false,"Invalid WAV parts");});return;}
+        auto out=destination.createOutputStream();
+        if(!out){juce::MessageManager::callAsync([done]{if(done)done(false,"Could not create output file");});return;}
+        bool ok=true; juce::String err;
+        for(int i=0;i<parts && ok;++i)
+        {
+            int status=0;
+            auto url=juce::URL(kWorker).withParameter("dmwav",messageId)
+                     .withParameter("token",me.token).withParameter("part",juce::String(i));
+            auto in=url.createInputStream(juce::URL::InputStreamOptions()
+                       .withConnectionTimeoutMs(15000).withStatusCode(&status)
+                       .withExtraHeaders("Accept: audio/wav\r\n"));
+            if(!in || status>=400){ok=false;err="Could not download WAV part "+juce::String(i+1);break;}
+            juce::MemoryBlock mb;
+            if(!in->readIntoMemoryBlock(mb) || mb.getSize()==0){ok=false;err="Empty WAV part";break;}
+            out->write(mb.getData(),mb.getSize());
+        }
+        out->flush();
+        out.reset();
+        if(!ok) destination.deleteFile();
+        juce::MessageManager::callAsync([done,ok,err]{if(done)done(ok,err);});
+    });
+}
+
 void Client::send (juce::var body, Done done)
 {
     enqueue ([this, body, done]() mutable
@@ -381,6 +509,25 @@ void Client::send (juce::var body, Done done)
                 }
             }
             if (j["chat"].isArray()) { applyChat (j["chat"]); notifyChanged(); }   // instant chat update
+            if (body["action"].toString() == "dm_list" && j["messages"].isArray())
+            {
+                const juce::ScopedLock sl(lock);
+                auto updated = snapshot ? std::make_shared<Snapshot>(*snapshot) : std::make_shared<Snapshot>();
+                updated->dms = parseDms(j["messages"]);
+                snapshot = updated;
+                notifyChanged();
+            }
+            if (body["action"].toString() == "social_list")
+            {
+                const juce::ScopedLock sl(lock);
+                auto updated = snapshot ? std::make_shared<Snapshot>(*snapshot) : std::make_shared<Snapshot>();
+                updated->friends = parseStrings(j["friends"]);
+                updated->directory = parseStrings(j["directory"]);
+                updated->friendIncoming = parseRequests(j["incoming"]);
+                updated->wavRequests = parseRequests(j["wavRequests"]);
+                snapshot = updated;
+                notifyChanged();
+            }
             forcePull = true;
         }
         juce::MessageManager::callAsync ([done, ok, err] { if (done) done (ok, err); });

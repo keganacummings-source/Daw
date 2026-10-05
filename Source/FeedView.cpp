@@ -33,9 +33,11 @@ struct FeedContent : public juce::Component
 FeedView::FeedView()
 {
     content = new FeedContent (*this);
+    content->setOpaque(true);
     setViewedComponent (content, true);
     setScrollBarsShown (true, false);
-    setScrollBarThickness (8);
+    setScrollBarThickness (6);
+    setScrollOnDragEnabled(true);
 }
 
 void FeedView::resized()
@@ -56,6 +58,7 @@ void FeedView::setItems (std::vector<Item> newItems, bool stickToBottom)
     firstFill = false;
 
     items = std::move (newItems);
+    layoutDirty = true;
     layoutItems();
 
     if (stickToBottom && wasAtBottom) scrollToBottom();
@@ -65,9 +68,10 @@ void FeedView::setItems (std::vector<Item> newItems, bool stickToBottom)
 void FeedView::layoutItems()
 {
     const int w = juce::jmax (140, getWidth() - getScrollBarThickness());   // always reserve the scrollbar lane
-    const int x0 = 14, cw = w - 28;
-    const auto nameFont = font (12.5f, true), badgeFont = font (9.0f, true), metaFont = font (11.0f);
-    const auto chipFont = font (12.0f);
+    const int x0 = 12, cw = w - 24;
+    const float uiScale = juce::jlimit(0.90f,1.15f,(float)getWidth()/520.0f);
+    const auto nameFont = font (12.5f*uiScale, true), badgeFont = font (9.0f*uiScale, true), metaFont = font (11.0f*uiScale);
+    const auto chipFont = font (12.0f*uiScale);
     int y = 6;
 
     for (auto& it : items)
@@ -93,7 +97,7 @@ void FeedView::layoutItems()
 
         if (it.title.isNotEmpty())
         {
-            makeLayout (it.titleL, it.title, font (14.0f, true), text, cw);
+            makeLayout (it.titleL, it.title, font (14.0f*uiScale, true), text, cw);
             it.titleR = { x0, cy, cw, heightOf (it.titleL) };
             cy += it.titleR.getHeight() + 3;
         }
@@ -108,7 +112,7 @@ void FeedView::layoutItems()
 
         if (it.body.isNotEmpty())
         {
-            makeLayout (it.bodyL, it.body, font (13.0f), text, cw);
+            makeLayout (it.bodyL, it.body, font (13.0f*uiScale), text, cw);
             it.bodyR = { x0, cy, cw, heightOf (it.bodyL) };
             cy += it.bodyR.getHeight() + 6;
         }
@@ -162,11 +166,13 @@ void FeedView::paintContent (juce::Graphics& g)
     {
         if (it.y + it.h < clip.getY() || it.y > clip.getBottom()) continue;
 
-        const juce::Rectangle<float> card (6.0f, (float) it.y, (float) (w - 12), (float) (it.h - 6));
+        const juce::Rectangle<float> card (7.0f, (float) it.y, (float) (w - 14), (float) (it.h - 7));
         g.setColour (panel);
         g.fillRoundedRectangle (card, 7.0f);
         g.setColour (border);
-        g.drawRoundedRectangle (card.reduced (0.5f), 7.0f, 1.0f);
+        g.drawRoundedRectangle (card.reduced (0.5f), 8.0f, 1.0f);
+        g.setColour(accent.withAlpha(0.22f));
+        g.fillRoundedRectangle(card.getX(),card.getY(),2.5f,card.getHeight(),2.0f);
 
         if (it.user.isNotEmpty())
         {

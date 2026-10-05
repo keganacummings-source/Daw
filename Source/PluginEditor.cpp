@@ -74,14 +74,15 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     T::applyPalette (client.getSession().theme.isNotEmpty() ? client.getSession().theme : "trippah");
     setLookAndFeel (&laf);
     setResizable (true, true);
-    setResizeLimits (300, 340, 1000, 1200);
+    setResizeLimits (380, 360, 1400, 1000);
 
     for (juce::Component* c : std::initializer_list<juce::Component*> {
-             &whoLabel, &statusLabel, &onlineBtn, &logoutBtn, &chatTab, &threadsTab, &themeBox,
+             &whoLabel, &statusLabel, &onlineBtn, &logoutBtn, &chatTab, &threadsTab, &dmsTab, &themeBox,
              &loginInfo, &loginMsg, &userEd, &passEd, &loginBtn,
              &chatFeed, &chatInput, &chatEmoji, &chatSend,
+             &dmFeed, &dmPeerBox, &dmInput, &dmSend, &dmRequests,
              &threadFeed, &detailFeed, &newThreadBtn, &backBtn,
-             &composeTitle, &composeBody, &commentInput, &composeCount,
+             &composeTitle, &composeBody, &commentInput, &composeCount, &composeAudioBtn, &composeAudioLabel,
              &composeEmoji, &composePost, &composeCancel, &commentEmoji, &commentSend })
         addChildComponent (c);
     statusLabel.setVisible (true);
@@ -107,6 +108,7 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     chatTab.setToggleState (true, juce::dontSendNotification);
     chatTab.onClick    = [this] { tab = Tab::chat;    updateVisibility(); };
     threadsTab.onClick = [this] { tab = Tab::threads; updateVisibility(); };
+    dmsTab.onClick      = [this] { tab = Tab::dms; updateVisibility(); rebuildDms(); };
 
     // login
     loginInfo.setFont (T::font (12.0f));
@@ -138,6 +140,15 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     chatSend.onClick      = [this] { sendChat(); };
     chatFeed.setEmptyText ("No messages yet. Say hello.");
 
+    // DMs
+    dmPeerBox.setTextWhenNothingSelected ("Choose a user");
+    dmPeerBox.onChange = [this] { selectDmPeer(); };
+    dmFeed.setEmptyText ("Choose a user to open a private conversation.");
+    styleEditor (dmInput, "Private message...", 1000, false);
+    dmInput.onReturnKey = [this] { sendDm(); };
+    dmSend.onClick = [this] { sendDm(); };
+    dmRequests.onClick = [this] { showSocialRequests(); };
+
     // threads
     threadFeed.setEmptyText ("No threads yet. Start one with + New thread.");
     newThreadBtn.onClick = [this] { tmode = TMode::compose; updateVisibility(); composeTitle.grabKeyboardFocus(); };
@@ -156,6 +167,16 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     };
     composeTitle.onTextChange = upd;
     composeBody.onTextChange  = upd;
+    composeAudioLabel.setFont(T::font(10.5f));
+    composeAudioLabel.setColour(juce::Label::textColourId,T::dim);
+    composeAudioLabel.setText("No WAV attached",juce::dontSendNotification);
+    composeAudioBtn.onClick = [this]
+    {
+        juce::FileChooser chooser("Choose WAV to share",juce::File(),"*.wav");
+        if(!chooser.browseForFileToOpen()) return;
+        composeAudioFile=chooser.getResult();
+        composeAudioLabel.setText(composeAudioFile.getFileName(),juce::dontSendNotification);
+    };
     composeTitle.onReturnKey  = [this] { composeBody.grabKeyboardFocus(); };
     composePost.onClick       = [this] { postThread(); };
     composeCancel.onClick     = [this] { tmode = TMode::list; updateVisibility(); };
@@ -173,8 +194,17 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
         f->onAddReact = [this] (const Item& it, juce::Rectangle<int> r) { pickReaction (it, r); };
     }
     threadFeed.onOpen = [this] (const Item& it) { openThread (it.id); };
+    dmFeed.onOpen = [this] (const Item& it)
+    {
+        if (it.audioParts <= 0 || it.id.isEmpty()) return;
+        juce::FileChooser chooser("Save private WAV",juce::File(), "*.wav");
+        if(!chooser.browseForFileToSave(true)) return;
+        const auto destination=chooser.getResult();
+        client.downloadDmWav(it.id,it.audioParts,destination,[this](bool ok,const juce::String& err)
+        { setStatus(ok?"Private WAV saved":err); });
+    };
 
-    setSize (proc.editorW, proc.editorH);
+    setSize (juce::jlimit(420,1400,proc.editorW), juce::jlimit(380,1000,proc.editorH));
     refreshAll();
     client.addListener (this);     // polling starts now
 }
@@ -189,45 +219,18 @@ DreamShareEditor::~DreamShareEditor()
 void DreamShareEditor::paint (juce::Graphics& g)
 {
     g.fillAll (T::bg);
-    if (appliedTheme == "goonr")
-    {
-        g.setFont (T::font (11.0f, true));
-        for (int x = 14; x < getWidth(); x += 31)
-            for (int y = -20; y < getHeight(); y += 54)
-            {
-                const int offset = (int) ((animationTick * 3 + (juce::uint32) (x * 7)) % 54);
-                g.setColour (T::accent.withAlpha (((x + y + (int) animationTick) % 4 == 0) ? 0.32f : 0.12f));
-                g.drawText (((x / 31 + y / 54 + (int) animationTick / 3) % 2) ? "1" : "0",
-                            x, y + offset, 12, 15, juce::Justification::centred, false);
-            }
-    }
-    else if (appliedTheme == "trippah")
-    {
-        for (int i = 0; i < 14; ++i)
-        {
-            const int x = (i * 97 + (int) (animationTick * (i % 3 + 1) * 2)) % juce::jmax (1, getWidth());
-            const int y = (i * 71 + (int) (animationTick * (i % 2 + 1))) % juce::jmax (1, getHeight());
-            const float scale = 0.65f + (float) (i % 4) * 0.12f;
-            g.setColour (T::pink.withAlpha (0.12f));
-            g.drawLine ((float) x, (float) y, (float) x, (float) y + 10.0f * scale, 2.0f * scale);
-            g.setColour (T::accent.withAlpha (0.14f));
-            g.fillEllipse ((float) x - 7.0f * scale, (float) y - 3.0f * scale,
-                           14.0f * scale, 8.0f * scale);
-            g.setColour (T::pink.withAlpha (0.18f));
-            g.fillRoundedRectangle ((float) ((x + 43) % juce::jmax (1, getWidth())),
-                                    (float) ((y + 29) % juce::jmax (1, getHeight())),
-                                    15.0f * scale, 6.0f * scale, 3.0f * scale);
-        }
-    }
-    g.setColour (T::header);  g.fillRect (0, 0, getWidth(), 34);
-    g.setColour (T::border);  g.drawHorizontalLine (33, 0.0f, (float) getWidth());
+    // Static background only: avoid per-frame animation while the DAW is resizing or scrolling.
+    g.setColour (T::bg.withAlpha (0.98f));
+    g.fillRect (0, 34, getWidth(), juce::jmax (0, getHeight() - 55));
+    g.setColour (T::header);  g.fillRect (0, 0, getWidth(), 40);
+    g.setColour (T::border);  g.drawHorizontalLine (39, 0.0f, (float) getWidth());
     g.setColour (T::border);  g.drawHorizontalLine (getHeight() - 21, 0.0f, (float) getWidth());
     g.setColour (T::pink);
     g.setFont (T::font (12.5f, true));
-    g.drawText ("DREAMSHARE", 10, 0, 82, 34, juce::Justification::centredLeft, false);
+    g.drawText ("DREAMSHARE", 12, 0, 92, 40, juce::Justification::centredLeft, false);
     g.setColour (T::dim);
     g.setFont (T::font (10.0f, true));
-    g.drawText ("LITE", 90, 2, 40, 34, juce::Justification::centredLeft, false);
+    g.drawText ("LITE", 104, 2, 40, 40, juce::Justification::centredLeft, false);
 }
 
 void DreamShareEditor::resized()
@@ -236,17 +239,18 @@ void DreamShareEditor::resized()
     proc.editorH = getHeight();
 
     auto r = getLocalBounds();
-    auto top = r.removeFromTop (34).reduced (8, 5);
+    auto top = r.removeFromTop (40).reduced (8, 6);
     logoutBtn.setBounds (top.removeFromRight (58));  top.removeFromRight (6);
     onlineBtn.setBounds (top.removeFromRight (52));  top.removeFromRight (6);
     whoLabel.setBounds  (top.removeFromRight (90));
     statusLabel.setBounds (r.removeFromBottom (21).reduced (8, 0));
-    auto tabs = r.removeFromTop (30).reduced (8, 2);
+    auto tabs = r.removeFromTop (34).reduced (8, 3);
     auto themeArea = tabs.removeFromRight (juce::jmin (120, juce::jmax (100, tabs.getWidth() - 150)));
     themeBox.setBounds (themeArea);
     tabs.removeFromRight (6);
-    chatTab.setBounds (tabs.removeFromLeft (66));  tabs.removeFromLeft (4);
-    threadsTab.setBounds (tabs.removeFromLeft (74));
+    chatTab.setBounds (tabs.removeFromLeft (58));  tabs.removeFromLeft (4);
+    threadsTab.setBounds (tabs.removeFromLeft (72)); tabs.removeFromLeft (4);
+    dmsTab.setBounds (tabs.removeFromLeft (58));
     const auto body = r;
 
     {   // login
@@ -265,6 +269,17 @@ void DreamShareEditor::resized()
         chatInput.setBounds (in);
         chatFeed.setBounds (b);
     }
+    {   // private DMs
+        auto b = body;
+        auto bar = b.removeFromTop (34).reduced (6, 4);
+        dmPeerBox.setBounds (bar.removeFromLeft (juce::jmax (120, bar.getWidth() - 190)));
+        bar.removeFromLeft (6);
+        dmRequests.setBounds (bar.removeFromRight (108));
+        auto in = b.removeFromBottom (40).reduced (6, 5);
+        dmSend.setBounds (in.removeFromRight (56)); in.removeFromRight (4);
+        dmInput.setBounds (in);
+        dmFeed.setBounds (b);
+    }
     {   // thread list
         auto b = body;
         auto bar = b.removeFromTop (34).reduced (6, 4);
@@ -276,9 +291,11 @@ void DreamShareEditor::resized()
         composeTitle.setBounds (b.removeFromTop (30));  b.removeFromTop (6);
         auto btns = b.removeFromBottom (32);
         composePost.setBounds (btns.removeFromRight (110));  btns.removeFromRight (6);
-        composeCancel.setBounds (btns.removeFromRight (70));
+        composeCancel.setBounds (btns.removeFromRight (70)); btns.removeFromRight(6);
+        composeAudioBtn.setBounds(btns.removeFromRight(88)); btns.removeFromRight(6);
         composeEmoji.setBounds (btns.removeFromLeft (34));
         composeCount.setBounds (btns.withTrimmedLeft (6));
+        composeAudioLabel.setBounds(btns.removeFromRight(150));
         b.removeFromBottom (6);
         composeBody.setBounds (b);
     }
@@ -299,7 +316,7 @@ void DreamShareEditor::setStatus (const juce::String& s) { statusLabel.setText (
 
 void DreamShareEditor::clientChanged()                       { refreshAll(); }
 void DreamShareEditor::clientStatus (const juce::String& s)  { setStatus (s); }
-void DreamShareEditor::timerCallback()                       { ++animationTick; repaint(); }
+void DreamShareEditor::timerCallback()                       { /* visual effects intentionally disabled for DAW performance */ }
 
 bool DreamShareEditor::canModerate (const Snapshot& s, const Session& me) const
 {
@@ -313,6 +330,7 @@ void DreamShareEditor::refreshAll()
     rebuildChat();
     rebuildThreadList();
     rebuildDetail();
+    rebuildDms();
 }
 
 void DreamShareEditor::updateHeader()
@@ -371,8 +389,7 @@ void DreamShareEditor::updateTheme()
     chatFeed.repaint();
     threadFeed.repaint();
     detailFeed.repaint();
-    if (themeId == "goonr" || themeId == "trippah") startTimerHz (8);
-    else stopTimer();
+    stopTimer();
 }
 
 void DreamShareEditor::selectTheme()
@@ -400,10 +417,12 @@ void DreamShareEditor::updateVisibility()
     const bool c = in && tab == Tab::chat, t = in && tab == Tab::threads;
 
     show ({ &loginInfo, &loginMsg, &userEd, &passEd, &loginBtn }, ! in);
-    show ({ &whoLabel, &onlineBtn, &logoutBtn, &chatTab, &threadsTab, &themeBox }, in);
+    show ({ &whoLabel, &onlineBtn, &logoutBtn, &chatTab, &threadsTab, &dmsTab, &themeBox }, in);
     show ({ &chatFeed, &chatInput, &chatEmoji, &chatSend }, c);
+    const bool d = in && tab == Tab::dms;
+    show ({ &dmFeed, &dmPeerBox, &dmInput, &dmSend, &dmRequests }, d);
     show ({ &newThreadBtn, &threadFeed }, t && tmode == TMode::list);
-    show ({ &composeTitle, &composeBody, &composeCount, &composeEmoji, &composePost, &composeCancel },
+    show ({ &composeTitle, &composeBody, &composeCount, &composeAudioBtn, &composeAudioLabel, &composeEmoji, &composePost, &composeCancel },
           t && tmode == TMode::compose);
     show ({ &backBtn, &detailFeed, &commentInput, &commentEmoji, &commentSend }, t && tmode == TMode::detail);
 }
@@ -496,6 +515,136 @@ void DreamShareEditor::rebuildDetail()
     detailFeed.setItems (std::move (v), false);
 }
 
+
+void DreamShareEditor::rebuildDms()
+{
+    if (tab != Tab::dms) return;
+    const auto snap = client.getSnapshot();
+    const auto me = client.getSession();
+    if (!snap || !me.valid()) return;
+
+    syncingThemeBox = true;
+    const auto wanted = dmPeerBox.getText();
+    dmPeerBox.clear(juce::dontSendNotification);
+    int selected = 0, n = 0;
+    for (const auto& u : snap->directory)
+    {
+        if (u.equalsIgnoreCase(me.user)) continue;
+        dmPeerBox.addItem(u, ++n);
+        if (u.equalsIgnoreCase(wanted)) selected = n;
+    }
+    if (selected > 0) dmPeerBox.setSelectedId(selected, juce::dontSendNotification);
+    syncingThemeBox = false;
+
+    std::vector<Item> v;
+    for (const auto& m : snap->dms)
+    {
+        Item it;
+        it.kind = "dm"; it.id = m.id; it.user = m.from; it.body = m.text;
+        it.meta = when(m.at) + (m.audioParts > 0 ? "  •  WAV attachment • click to open" : "");
+        it.audioUpload=m.audioUpload; it.audioStore=m.audioStore; it.audioParts=m.audioParts;
+        it.me = me.user; it.clickable = (m.audioParts > 0);
+        if (m.audioParts > 0 && it.body.isEmpty()) it.body = "WAV attachment";
+        v.push_back(std::move(it));
+    }
+    dmFeed.setItems(std::move(v), true);
+}
+
+void DreamShareEditor::selectDmPeer()
+{
+    if (syncingThemeBox || !client.getSession().valid()) return;
+    const auto peer = dmPeerBox.getText().trim();
+    if (peer.isEmpty()) return;
+    dmInput.clear();
+    client.send(obj({{"action","dm_list"},{"peer",peer}}), [this](bool ok, const juce::String& err)
+    {
+        if (!ok) setStatus(err);
+    });
+}
+
+void DreamShareEditor::sendDm()
+{
+    const auto peer = dmPeerBox.getText().trim();
+    const auto text = dmInput.getText().trim();
+    if (peer.isEmpty()) { setStatus("Choose a user first"); return; }
+    if (text.isEmpty()) return;
+    dmInput.clear();
+    client.send(obj({{"action","dm_send"},{"to",peer},{"text",text}}),
+                [this,text](bool ok,const juce::String& err)
+                { if(!ok){ dmInput.setText(text,false); setStatus(err); } });
+}
+
+void DreamShareEditor::showSocialRequests()
+{
+    const auto snap=client.getSnapshot();
+    if(!snap) return;
+    juce::PopupMenu m;
+    struct Entry { int id; bool wav; bool accept; ds::SocialRequest req; };
+    std::vector<Entry> entries;
+    int next=10;
+    m.addSectionHeader("WAV requests");
+    for(const auto& r:snap->wavRequests)
+        if(r.status=="pending" && r.to.equalsIgnoreCase(client.getSession().user))
+        {
+            m.addItem(next,"Approve • "+r.from); entries.push_back({next,true,true,r}); ++next;
+            m.addItem(next,"Decline • "+r.from); entries.push_back({next,true,false,r}); ++next;
+        }
+    if(entries.empty()) m.addItem(1,"No pending WAV requests",false);
+    m.addSeparator(); m.addSectionHeader("Friend requests");
+    for(const auto& r:snap->friendIncoming)
+        if(r.status=="pending")
+        {
+            m.addItem(next,"Accept friend • "+r.from); entries.push_back({next,false,true,r}); ++next;
+            m.addItem(next,"Decline friend • "+r.from); entries.push_back({next,false,false,r}); ++next;
+        }
+    if(next==10) m.addItem(2,"No pending friend requests",false);
+
+    juce::Component::SafePointer<DreamShareEditor> safe(this);
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&dmRequests),
+      [safe,entries](int result)
+      {
+        if(safe==nullptr) return;
+        for(const auto& e:entries) if(e.id==result)
+        {
+            if(e.wav)
+            {
+                if(e.accept) safe->client.send(obj({{"action","wav_request_approve"},{"requestId",e.req.id}}),
+                    [safe,id=e.req.id](bool ok,const juce::String& err)
+                    {
+                        if(safe==nullptr)return;
+                        if(!ok){safe->setStatus(err);return;}
+                        safe->chooseWavForRequest(id);
+                    });
+                else safe->client.send(obj({{"action","wav_request_decline"},{"requestId",e.req.id}}));
+            }
+            else safe->client.send(obj({{"action",e.accept?"friend_accept":"friend_decline"},{"requestId",e.req.id}}));
+            return;
+        }
+      });
+}
+
+void DreamShareEditor::chooseWavForRequest (const juce::String& requestId)
+{
+    juce::FileChooser chooser("Choose the approved WAV export", juce::File(), "*.wav");
+    if (!chooser.browseForFileToOpen()) return;
+    setStatus("Uploading WAV export...");
+    const auto file=chooser.getResult();
+    juce::Component::SafePointer<DreamShareEditor> safe(this);
+    client.uploadWav(file, [safe,requestId](bool ok,const juce::String& err,const juce::String& store,
+                                             const juce::String& upload,int parts,juce::int64 bytes)
+    {
+        if(safe==nullptr) return;
+        if(!ok){ safe->setStatus(err); return; }
+        safe->setStatus("Sending WAV to requester...");
+        safe->client.send(obj({{"action","wav_request_fulfill"},{"requestId",requestId},
+                               {"audioStore",store},{"audioUpload",upload},{"audioParts",parts},
+                               {"audioBytes",bytes},{"audioMime","audio/wav"}}),
+                          [safe](bool sent,const juce::String& e)
+                          { if(safe!=nullptr) safe->setStatus(sent?"WAV export sent":"WAV send failed: "+e); });
+    });
+}
+
+
 void DreamShareEditor::openThread (const juce::String& id)
 {
     openId = id;
@@ -544,22 +693,46 @@ void DreamShareEditor::postThread()
 {
     const auto title = composeTitle.getText().trim();
     const auto text  = composeBody.getText().trim();
-    if (title.isEmpty()) { setStatus ("Set a thread title"); return; }
-    if (text.isEmpty())  { setStatus ("Write the thread text"); return; }
+    if (title.isEmpty() && text.isEmpty() && !composeAudioFile.existsAsFile()) { setStatus ("Add a title, message or WAV"); return; }
 
-    composePost.setEnabled (false);
-    juce::Component::SafePointer<DreamShareEditor> safe (this);
-    client.send (obj ({ { "action", "create_thread" }, { "title", title }, { "text", text } }),
-                 [safe] (bool ok, const juce::String& err)
-                 {
-                     if (safe == nullptr) return;
-                     safe->composePost.setEnabled (true);
-                     if (! ok) { safe->setStatus (err); return; }
-                     safe->composeTitle.clear();  safe->composeBody.clear();
-                     safe->tmode = TMode::list;
-                     safe->updateVisibility();
-                     safe->setStatus ("Thread posted");
-                 });
+    composePost.setEnabled(false);
+    juce::Component::SafePointer<DreamShareEditor> safe(this);
+
+    auto finishPost = [safe,title,text](const juce::String& store,const juce::String& upload,int parts,juce::int64 bytes)
+    {
+        if(safe==nullptr) return;
+        auto body=obj({{"action","create_thread"},{"title",title},{"text",text}});
+        if(parts>0)
+        {
+            if(auto* o=body.getDynamicObject())
+            {
+                o->setProperty("hasAudio",true); o->setProperty("audioStore",store); o->setProperty("audioUpload",upload);
+                o->setProperty("audioParts",parts); o->setProperty("audioBytes",(double)bytes); o->setProperty("audioMime","audio/wav");
+            }
+        }
+        safe->client.send(body,[safe](bool ok,const juce::String& err)
+        {
+            if(safe==nullptr) return;
+            safe->composePost.setEnabled(true);
+            if(!ok){safe->setStatus(err);return;}
+            safe->composeTitle.clear(); safe->composeBody.clear(); safe->composeAudioFile={};
+            safe->composeAudioLabel.setText("No WAV attached",juce::dontSendNotification);
+            safe->tmode=TMode::list; safe->updateVisibility(); safe->setStatus("Thread posted");
+        });
+    };
+
+    if(composeAudioFile.existsAsFile())
+    {
+        setStatus("Uploading WAV...");
+        client.uploadWav(composeAudioFile,[safe,finishPost](bool ok,const juce::String& err,const juce::String& store,
+                                                           const juce::String& upload,int parts,juce::int64 bytes)
+        {
+            if(safe==nullptr) return;
+            if(!ok){safe->composePost.setEnabled(true);safe->setStatus(err);return;}
+            finishPost(store,upload,parts,bytes);
+        });
+    }
+    else finishPost({}, {}, 0, 0);
 }
 
 void DreamShareEditor::postComment()
@@ -646,73 +819,71 @@ void DreamShareEditor::showUserMenu (const juce::String& name, juce::Point<int> 
 {
     const auto snap = client.getSnapshot();
     const auto me = client.getSession();
-    if (! snap || ! canModerate (*snap, me) || snap->isSuper (name)) return;
+    if (!snap || !me.valid() || name.equalsIgnoreCase(me.user)) return;
 
-    const bool imSuper = me.role == "super" && snap->isSuper (me.user);
-    const bool targetIsMod = snap->isMod (name), targetKyoto = snap->hasKyoto (name);
-    const auto custom = snap->customRoles.find (name.toLowerCase());
+    const bool canMod = canModerate(*snap, me);
+    const bool imSuper = me.role == "super" && snap->isSuper(me.user);
+    const bool targetIsMod = snap->isMod(name), targetKyoto = snap->hasKyoto(name);
+    const auto custom = snap->customRoles.find(name.toLowerCase());
     const bool hasCustomTag = custom != snap->customRoles.end();
-    const auto customTag = hasCustomTag ? custom->second.label : juce::String();
+    const bool isFriend = snap->friends.contains(name, true);
 
     juce::PopupMenu m;
-    m.addSectionHeader (name);
-    if (imSuper) m.addItem (1, targetIsMod ? "Remove mod" : "Promote to mod");
-    m.addItem (2, targetKyoto ? "Remove Kyoto role" : "Add Kyoto role");
-    m.addItem (3, "Delete their chat lines");
-    if (imSuper)
+    m.addSectionHeader(name);
+    m.addItem(1, "Open private DM");
+    m.addItem(2, isFriend ? "Remove friend" : "Add friend");
+    m.addItem(3, "Request WAV export");
+    m.addSeparator();
+
+    if (canMod && !snap->isSuper(name))
     {
-        m.addSeparator();
-        m.addItem (4, hasCustomTag ? "Change custom tag..." : "Set custom tag...");
-        if (hasCustomTag) m.addItem (5, "Remove custom tag");
+        if (imSuper) m.addItem(10, targetIsMod ? "Remove mod" : "Promote to mod");
+        m.addItem(11, targetKyoto ? "Remove Kyoto role" : "Add Kyoto role");
+        if (imSuper)
+        {
+            m.addItem(12, hasCustomTag ? "Change custom tag..." : "Set custom tag...");
+            if (hasCustomTag) m.addItem(13, "Remove custom tag");
+        }
     }
 
-    juce::StringArray chatIds;
-    for (auto& c : snap->chat) if (c.user.equalsIgnoreCase (name)) chatIds.add (c.id);
-
-    juce::Component::SafePointer<DreamShareEditor> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (juce::Rectangle<int> (pos.x, pos.y, 1, 1)),
-        [safe, name, targetIsMod, targetKyoto, chatIds, imSuper, hasCustomTag, customTag] (int r)
+    juce::Component::SafePointer<DreamShareEditor> safe(this);
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({pos.x,pos.y,1,1}),
+      [safe,name,isFriend,imSuper,targetIsMod,targetKyoto,hasCustomTag](int r)
+      {
+        if(safe==nullptr || r==0) return;
+        auto& c=safe->client;
+        if(r==1)
         {
-            if (safe == nullptr || r == 0) return;
-            auto done = [safe] (bool ok, const juce::String& err)
-            {
-                if (safe != nullptr) safe->setStatus (ok ? juce::String ("Updated") : err);
-            };
-            auto& c = safe->client;
-            if (r == 1) c.send (obj ({ { "action", targetIsMod ? "demote_mod" : "promote_mod" }, { "target", name } }), done);
-            if (r == 2) c.send (obj ({ { "action", targetKyoto ? "clear_role" : "set_role" }, { "target", name }, { "role", "kyoto" } }), done);
-            if (r == 3) for (auto& id : chatIds) c.send (obj ({ { "action", "chat_delete" }, { "messageId", id } }), done);
-            if (r == 4 && imSuper)
-            {
-                auto* alert = new juce::AlertWindow ("Custom tag", "Enter a badge label (2-24 characters).",
-                                                      juce::AlertWindow::NoIcon);
-                alert->addTextEditor ("tag", customTag, "Tag label");
-                alert->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
-                alert->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                juce::Component::SafePointer<juce::AlertWindow> alertSafe (alert);
-                alert->enterModalState (true, juce::ModalCallbackFunction::create (
-                    [safe, alertSafe, name] (int result)
-                    {
-                        if (safe == nullptr || alertSafe == nullptr || result != 1) return;
-                        const auto label = alertSafe->getTextEditorContents ("tag").trim();
-                        if (label.length() < 2 || label.length() > 24)
-                        {
-                            safe->setStatus ("Custom tag must be 2-24 characters");
-                            return;
-                        }
-                        safe->client.send (obj ({ { "action", "set_custom_role" },
-                                                  { "target", name }, { "label", label } }),
-                                           [safe] (bool ok, const juce::String& err)
-                                           {
-                                               if (safe != nullptr) safe->setStatus (ok ? "Custom tag saved" : err);
-                                           });
-                    }), true);
-            }
-            if (r == 5 && imSuper && hasCustomTag)
-                c.send (obj ({ { "action", "clear_custom_role" }, { "target", name } }),
-                        [safe] (bool ok, const juce::String& err)
-                        {
-                            if (safe != nullptr) safe->setStatus (ok ? "Custom tag removed" : err);
-                        });
-        });
+            safe->tab=Tab::dms; safe->updateVisibility();
+            safe->dmPeerBox.setText(name,juce::dontSendNotification);
+            safe->selectDmPeer();
+            return;
+        }
+        if(r==2) { c.send(obj({{"action",isFriend?"friend_remove":"friend_request"},{"target",name}})); return; }
+        if(r==3)
+        {
+            c.send(obj({{"action","wav_request"},{"target",name},{"source",safe->tab==Tab::dms?"dm":"main"}}),
+                    [safe](bool ok,const juce::String& e){ if(safe!=nullptr) safe->setStatus(ok?"WAV request sent":e); });
+            return;
+        }
+        auto done=[safe](bool ok,const juce::String& e){ if(safe!=nullptr) safe->setStatus(ok?"Updated":e); };
+        if(r==10 && imSuper) c.send(obj({{"action",targetIsMod?"demote_mod":"promote_mod"},{"target",name}}),done);
+        if(r==11) c.send(obj({{"action",targetKyoto?"clear_role":"set_role"},{"target",name},{"role","kyoto"}}),done);
+        if(r==12 && imSuper)
+        {
+            auto* alert=new juce::AlertWindow("Custom tag","Enter a badge label (2-24 characters).",juce::AlertWindow::NoIcon);
+            alert->addTextEditor("tag",hasCustomTag?safe->client.getSnapshot()->customRoles.at(name.toLowerCase()).label:juce::String(),"Tag label");
+            alert->addButton("Save",1,juce::KeyPress(juce::KeyPress::returnKey));
+            alert->addButton("Cancel",0,juce::KeyPress(juce::KeyPress::escapeKey));
+            juce::Component::SafePointer<juce::AlertWindow> a(alert);
+            alert->enterModalState(true,juce::ModalCallbackFunction::create([safe,a,name](int result){
+                if(safe==nullptr || a==nullptr || result!=1) return;
+                const auto label=a->getTextEditorContents("tag").trim();
+                if(label.length()<2 || label.length()>24){safe->setStatus("Custom tag must be 2-24 characters");return;}
+                safe->client.send(obj({{"action","set_custom_role"},{"target",name},{"label",label}}));
+            }),true);
+        }
+        if(r==13 && imSuper && hasCustomTag) c.send(obj({{"action","clear_custom_role"},{"target",name}}),done);
+      });
 }
+

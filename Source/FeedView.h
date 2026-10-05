@@ -9,7 +9,7 @@ namespace ds
     struct Item
     {
         juce::String kind;       // "chat" | "thread" | "comment"
-        juce::String id, threadId, user, title, body, meta, me;
+        juce::String id, threadId, user, title, body, meta, me, audioUpload, audioStore; int audioParts=0;
         juce::StringArray badges;
         std::map<juce::String, theme::Badge> badgeStyles;
         Reactions reactions;
