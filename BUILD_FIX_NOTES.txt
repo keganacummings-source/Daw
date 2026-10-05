@@ -1,18 +1,30 @@
-DreamShareLite 0.4.0 — VST3 Build Fix
+DreamShareLite 0.4.0 - Authentication Session Fix
 
-Fixed against the GitHub Actions/MSVC errors from the supplied build log:
+Fixed an immediate-login logout loop in Source/DreamClient.cpp.
 
-1. DreamClient.cpp
-   - Constructed juce::URL::InputStreamOptions with ParameterHandling::inAddress.
+Root cause:
+- After login, pull() called the authenticated social_list action directly through http().
+- That request did not include the current user's token.
+- The Worker correctly returned HTTP 401/code=auth.
+- http() interpreted that as an expired token, deleted the saved session, and the UI returned to login.
 
-2. FeedView.cpp/.h
-   - Declared layoutDirty/lastLayoutWidth/lastVisibleHeight.
-   - Added layout caching guard.
-   - Replaced deprecated setScrollOnDragEnabled(true) with setScrollOnDragMode(ScrollOnDragMode::all).
+Fixes:
+1. social_list now sends the current user + token.
+2. audio_part_b64 WAV upload requests now also send the current user + token.
 
-3. PluginEditor.cpp/.h
-   - Replaced synchronous FileChooser browseForFileToOpen/browseForFileToSave calls with JUCE asynchronous launchAsync calls.
-   - Added a persistent FileChooser member so callbacks remain valid.
-   - Updated WAV sharing, private WAV saving, and approved WAV export selection.
+Repository layout remains:
+Source/
+  DreamClient.cpp
+  DreamClient.h
+  EmojiGrid.h
+  FeedView.cpp
+  FeedView.h
+  PluginEditor.cpp
+  PluginEditor.h
+  PluginProcessor.cpp
+  PluginProcessor.h
+  Theme.h
+src/worker.js
+CMakeLists.txt
 
-The supplied CI log showed CMake/JUCE configuration and MSVC initialization succeeding; compilation failed only at these source-level errors.
+This patch targets the exact login-loop behavior reported after successful login.

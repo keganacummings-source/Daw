@@ -337,7 +337,7 @@ void Client::pull()
     if (currentSession.valid())
     {
         juce::var social; juce::String socialErr;
-        auto req = obj({{"action","social_list"}});
+        auto req = obj({{"action","social_list"}, {"user", currentSession.user}, {"token", currentSession.token}});
         if (http(true,juce::JSON::toString(req,true),social,socialErr))
         {
             s->friends = parseStrings(social["friends"]);
@@ -431,7 +431,7 @@ void Client::uploadWav (const juce::File& file, UploadDone done)
                 juce::MessageManager::callAsync ([done] { if(done) done(false,"Could not read WAV",{}, {},0,0); }); return;
             }
             const auto b64=juce::Base64::toBase64(block.getData(),block.getSize());
-            auto body=obj({{"action","audio_part_b64"},{"upload",upload},{"index",i},{"parts",parts},{"b64",b64}});
+            auto body=obj({{"action","audio_part_b64"},{"user",me.user},{"token",me.token},{"upload",upload},{"index",i},{"parts",parts},{"b64",b64}});
             juce::var j; juce::String err;
             if (!http(true,juce::JSON::toString(body,true),j,err) || !(bool)j["ok"]) {
                 if(err.isEmpty()) err=j["error"].toString();
