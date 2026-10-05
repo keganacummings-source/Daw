@@ -733,7 +733,7 @@ void DreamShareEditor::postThread()
             if(safe==nullptr) return;
             safe->composePost.setEnabled(true);
             if(!ok){safe->setStatus(err);return;}
-            safe->composeTitle.clear(); safe->composeBody.clear(); safe->composeAudioFile={};
+            safe->composeTitle.clear(); safe->composeBody.clear(); safe->composeAudioFile = juce::File();
             safe->composeAudioLabel.setText("No WAV attached",juce::dontSendNotification);
             safe->tmode=TMode::list; safe->updateVisibility(); safe->setStatus("Thread posted");
         });
