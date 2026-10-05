@@ -464,9 +464,11 @@ void Client::downloadDmWav (const juce::String& messageId, int parts, const juce
             int status=0;
             auto url=juce::URL(kWorker).withParameter("dmwav",messageId)
                      .withParameter("token",me.token).withParameter("part",juce::String(i));
-            auto in=url.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
-                       .withConnectionTimeoutMs(15000).withStatusCode(&status)
-                       .withExtraHeaders("Accept: audio/wav\r\n"));
+            const auto options = juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+                       .withConnectionTimeoutMs(15000)
+                       .withStatusCode(&status)
+                       .withExtraHeaders("Accept: audio/wav\r\n");
+            auto in = url.createInputStream(options);
             if(!in || status>=400){ok=false;err="Could not download WAV part "+juce::String(i+1);break;}
             juce::MemoryBlock mb;
             if(!in->readIntoMemoryBlock(mb) || mb.getSize()==0){ok=false;err="Empty WAV part";break;}
