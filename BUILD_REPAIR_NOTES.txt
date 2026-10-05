@@ -1,0 +1,15 @@
+DreamShare Lite Windows/macOS build repair
+
+The supplied Windows and macOS build logs show that Source/PluginProcessor.cpp
+was accidentally replaced with DreamMasterLite processor code. The project
+header declares DreamShareProcessor, so both MSVC and Clang fail immediately
+and then produce cascading errors.
+
+This package restores Source/PluginProcessor.cpp to the DreamShare implementation
+matching the existing PluginProcessor.h and CMake project.
+
+The existing workflow already configures Windows VST3 and macOS universal
+arm64+x86_64 VST3 and uploads the VST3 artifacts.
+
+Only the broken PluginProcessor.cpp was repaired, plus this note.
+Re-run GitHub Actions to confirm the remote builds.
