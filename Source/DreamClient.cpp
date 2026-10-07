@@ -557,3 +557,5 @@ void Client::sendJson (juce::var body, JsonDone done)
         juce::MessageManager::callAsync ([done, ok, j, err] { if (done) done (ok, j, err); });
     });
 }
+
+} // namespace ds

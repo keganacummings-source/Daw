@@ -1,23 +1,15 @@
-DreamShareLite build repair - 2026-10-07
+DreamShare Lite Windows/macOS build repair
 
-Fixed the GitHub Actions Windows build failure in Source/DreamClient.cpp.
+The supplied Windows and macOS build logs show that Source/PluginProcessor.cpp
+was accidentally replaced with DreamMasterLite processor code. The project
+header declares DreamShareProcessor, so both MSVC and Clang fail immediately
+and then produce cascading errors.
 
-Root cause:
-- An extra closing brace appeared immediately after Client::send().
-- This closed the surrounding namespace before Client::sendJson().
-- MSVC then reported cascading errors including:
-  C2653 Client is not a class or namespace name
-  C2061 JsonDone syntax error
-  missing getSession/http/enqueue
-  DynamicObject::setProperty argument errors
+This package restores Source/PluginProcessor.cpp to the DreamShare implementation
+matching the existing PluginProcessor.h and CMake project.
 
-Repair:
-- Removed only the stray closing brace.
-- The existing sendJson implementation remains intact.
-- No Worker/API behavior was changed.
-- The existing GitHub Actions workflow remains intact.
+The existing workflow already configures Windows VST3 and macOS universal
+arm64+x86_64 VST3 and uploads the VST3 artifacts.
 
-Expected result:
-- CMake configuration continues to succeed.
-- DreamClient.cpp should compile normally.
-- Windows VST3 build can proceed to artifact upload.
+Only the broken PluginProcessor.cpp was repaired, plus this note.
+Re-run GitHub Actions to confirm the remote builds.
