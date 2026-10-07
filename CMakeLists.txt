@@ -39,6 +39,19 @@ juce_add_plugin(DreamShareLite
   NEEDS_CURL               ${DS_CURL}
   COPY_PLUGIN_AFTER_BUILD  FALSE)
 
+# Global CMAKE_UNITY_BUILD=ON (e.g. Kyoto VST3 Quick Builder) concatenates JUCE
+# module .cpp files into one TU and trips their "Incorrect use of JUCE cpp file"
+# guards. Keep unity off for this target and any format sub-targets.
+set_target_properties(DreamShareLite PROPERTIES UNITY_BUILD OFF)
+get_target_property(_ds_formats DreamShareLite JUCE_FORMATS)
+if(_ds_formats)
+  foreach(_fmt ${_ds_formats})
+    if(TARGET DreamShareLite_${_fmt})
+      set_target_properties(DreamShareLite_${_fmt} PROPERTIES UNITY_BUILD OFF)
+    endif()
+  endforeach()
+endif()
+
 target_sources(DreamShareLite PRIVATE
   Source/PluginProcessor.cpp
   Source/PluginEditor.cpp

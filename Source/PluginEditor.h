@@ -16,7 +16,7 @@ public:
     void resized() override;
 
 private:
-    enum class Tab   { chat, threads, dms, discord };
+    enum class Tab   { chat, threads, dms };
     enum class TMode { list, compose, detail };
 
     // ds::Client::Listener
@@ -27,6 +27,7 @@ private:
     void setStatus (const juce::String&);
     void refreshAll();
     void rebuildChat();
+    void loadKyotoChat (bool showStatus = false);
     void rebuildThreadList();
     void rebuildDetail();
     void rebuildDms();
@@ -48,10 +49,6 @@ private:
     void showOnline();
     void selectDmPeer();
     void sendDm();
-    void loadDiscordChannels();
-    void loadDiscordMessages();
-    void sendDiscord();
-    void reactDiscord (const ds::Item&, const juce::String& key);
     void showSocialRequests();
     void chooseWavForRequest (const juce::String& requestId);
     bool canModerate (const ds::Snapshot&, const ds::Session&) const;
@@ -67,11 +64,12 @@ private:
 
     // header
     juce::Label whoLabel, statusLabel;
-    juce::TextButton onlineBtn { "o 0" }, logoutBtn { "Logout" }, chatTab { "Chat" }, threadsTab { "Threads" }, dmsTab { "DMs" }, discordTab { "Discord" };
+    juce::TextButton onlineBtn { "o 0" }, logoutBtn { "Logout" }, chatTab { "Chat" }, threadsTab { "Threads" }, dmsTab { "DMs" };
     juce::ComboBox themeBox;
     std::vector<ds::ThemeChoice> themeChoices;
     juce::String appliedTheme;
     bool syncingThemeBox = false;
+    bool kyotoChatLoading = false;
 
     // DMs
     ds::FeedView dmFeed;
@@ -79,20 +77,12 @@ private:
     juce::TextEditor dmInput;
     juce::TextButton dmSend { "Send" }, dmRequests { "WAV requests" };
 
-    // Discord lite: official bot API via the worker. Posts as the bot, never as the user.
-    ds::FeedView discordFeed;
-    juce::ComboBox discordChannels;
-    juce::Label discordNote;
-    juce::TextEditor discordInput;
-    juce::TextButton discordRefresh { "Refresh" }, discordSend { "Send" };
-    juce::String discordChannelId;
-
     // login
     juce::Label loginInfo, loginMsg;
     juce::TextEditor userEd, passEd;
     juce::TextButton loginBtn { "Sign in" };
 
-    // chat
+    // chat = Kyoto Discord #general (fixed channel via worker)
     ds::FeedView chatFeed;
     juce::TextEditor chatInput;
     ds::GlyphButton chatEmoji;

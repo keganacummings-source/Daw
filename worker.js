@@ -1069,9 +1069,44 @@ async function handleAudioPartB64(env, body, user) {
   return { ok:true, sink:sink, upload:upload, index:index, parts:parts, audioMaxBytes:MAX_AUDIO_BYTES };
 }
 
-// ---- Discord lite (DreamShare 0.4.1) ----
-// Official Discord bot API only. Secrets stay on the worker; the VST never
-// holds DISCORD_BOT_TOKEN or a user token. Optional DISCORD_GUILD_ID secret.
+// ---- Kyoto Discord chat (DreamShare Chat tab) ----
+// Single fixed channel only — Kyoto server #general.
+// https://discord.com/channels/1518252339864014929/1518252340707197000
+// Secrets stay on the worker; the VST never holds DISCORD_BOT_TOKEN.
+const KYOTO_DISCORD_GUILD = '1518252339864014929';
+const KYOTO_DISCORD_CHANNEL = '1518252340707197000';
+
+function formatDreamShareDiscordContent(username, text) {
+  const user = String(username || 'DreamShare').replace(/[\r\n]/g, ' ').trim().slice(0, 32) || 'DreamShare';
+  const body = String(text || '').trim().slice(0, 1800);
+  // Discord content limit 2000; leave room for attribution.
+  return user + ': ' + body + '\nSent from DreamShare';
+}
+
+function parseDreamShareDiscordMessage(m) {
+  const raw = String((m && m.content) || '');
+  const fromDs = /Sent from DreamShare\s*$/i.test(raw);
+  let user = (m.author && (m.author.global_name || m.author.username)) || 'discord';
+  let text = raw;
+  if (fromDs) {
+    const withoutFooter = raw.replace(/\n?Sent from DreamShare\s*$/i, '');
+    const colon = withoutFooter.indexOf(':');
+    if (colon > 0 && colon < 40) {
+      user = withoutFooter.slice(0, colon).trim() || user;
+      text = withoutFooter.slice(colon + 1).trim();
+    } else {
+      text = withoutFooter.trim();
+    }
+  }
+  return {
+    id: m.id,
+    user: user,
+    text: text,
+    at: m.timestamp || '',
+    fromDreamShare: fromDs
+  };
+}
+
 async function discordLite(env, action, body) {
   const token = env && env.DISCORD_BOT_TOKEN;
   if (!token) return { ok: false, status: 503, error: 'Set worker secret DISCORD_BOT_TOKEN. The VST never holds the bot token.' };
@@ -1094,48 +1129,56 @@ async function discordLite(env, action, body) {
     }
     return { ok: true, data: data };
   };
+
+  // Always Kyoto #general — no multi-channel browsing.
+  const guild = (env && env.DISCORD_GUILD_ID) || KYOTO_DISCORD_GUILD;
+  const channel = KYOTO_DISCORD_CHANNEL;
+
   if (action === 'discord_status') {
     const me = await call('/users/@me', 'GET');
     if (!me.ok) return me;
-    return { ok: true, bot: { id: me.data.id, name: me.data.username }, postsAs: 'bot' };
+    return {
+      ok: true,
+      bot: { id: me.data.id, name: me.data.username },
+      postsAs: 'bot',
+      guild: guild,
+      channel: channel,
+      channelName: 'general'
+    };
   }
-  const guildId = (env && env.DISCORD_GUILD_ID) || body.guild || '';
-  let guild = guildId;
-  if (!guild) {
-    const guilds = await call('/users/@me/guilds', 'GET');
-    if (!guilds.ok) return guilds;
-    if (!guilds.data || !guilds.data.length) return { ok: false, status: 404, error: 'Bot is in 0 servers' };
-    guild = guilds.data[0].id;
-  }
+
   if (action === 'discord_channels') {
-    const ch = await call('/guilds/' + guild + '/channels', 'GET');
-    if (!ch.ok) return ch;
-    const channels = (ch.data || [])
-      .filter((c) => c && (c.type === 0 || c.type === 5))
-      .map((c) => ({ id: c.id, name: c.name, parent: c.parent_id || '' }))
-      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-    return { ok: true, guild: guild, channels: channels };
+    // Single fixed channel — Chat tab does not list the whole server.
+    return {
+      ok: true,
+      guild: guild,
+      channels: [{ id: channel, name: 'general', parent: '' }]
+    };
   }
-  const channel = String(body.channel || body.channelId || '');
-  if (!channel) return { ok: false, status: 400, error: 'channel required' };
+
   if (action === 'discord_messages') {
-    const msgs = await call('/channels/' + channel + '/messages?limit=40', 'GET');
+    const msgs = await call('/channels/' + channel + '/messages?limit=50', 'GET');
     if (!msgs.ok) return msgs;
-    const messages = (msgs.data || []).slice().reverse().map((m) => ({
-      id: m.id,
-      user: (m.author && (m.author.global_name || m.author.username)) || 'discord',
-      text: m.content || '',
-      at: m.timestamp || ''
-    }));
-    return { ok: true, channel: channel, messages: messages };
+    const messages = (msgs.data || []).slice().reverse().map(parseDreamShareDiscordMessage);
+    return { ok: true, channel: channel, channelName: 'general', guild: guild, messages: messages };
   }
+
   if (action === 'discord_send') {
-    const content = String(body.text || body.content || '').trim().slice(0, 2000);
-    if (!content) return { ok: false, status: 400, error: 'empty message' };
+    const dreamUser = String(body.user || body.from || body.username || '').trim();
+    const text = String(body.text || body.content || '').trim();
+    if (!text) return { ok: false, status: 400, error: 'empty message' };
+    const content = formatDreamShareDiscordContent(dreamUser, text);
     const sent = await call('/channels/' + channel + '/messages', 'POST', { content: content });
     if (!sent.ok) return sent;
-    return { ok: true, id: sent.data && sent.data.id, postsAs: 'bot' };
+    return {
+      ok: true,
+      id: sent.data && sent.data.id,
+      postsAs: 'bot',
+      channel: channel,
+      attributedTo: dreamUser || 'DreamShare'
+    };
   }
+
   if (action === 'discord_react') {
     const message = String(body.message || body.id || '');
     const emoji = encodeURIComponent(String(body.emoji || body.key || '👀'));
@@ -1144,7 +1187,25 @@ async function discordLite(env, action, body) {
     if (!reacted.ok) return reacted;
     return { ok: true };
   }
+
   return { ok: false, status: 400, error: 'unknown discord action' };
+}
+
+/** Best-effort mirror of a DreamShare chat line into Kyoto #general. */
+async function mirrorChatToKyotoDiscord(env, username, text) {
+  try {
+    if (!env || !env.DISCORD_BOT_TOKEN) return;
+    const content = formatDreamShareDiscordContent(username, text);
+    await fetch('https://discord.com/api/v10/channels/' + KYOTO_DISCORD_CHANNEL + '/messages', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bot ' + env.DISCORD_BOT_TOKEN,
+        'Content-Type': 'application/json',
+        'User-Agent': 'DreamShareLite (https://dreamdaw.com, 0.4.1)'
+      },
+      body: JSON.stringify({ content: content })
+    });
+  } catch (e) { /* non-fatal */ }
 }
 
 
@@ -1883,6 +1944,8 @@ export default {
           if (feed.chat.length > 100) feed.chat = feed.chat.slice(-100);
           feed.updated = Date.now();
           await writeFeed(env, feed);
+          // Mirror into Kyoto Discord #general with username + "Sent from DreamShare"
+          await mirrorChatToKyotoDiscord(env, user, text);
           return json({ ok: true, storage: STORAGE, message: msg, chat: feed.chat.slice(-100), chatMax: 100 });
         }
 
