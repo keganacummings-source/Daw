@@ -50,6 +50,9 @@ namespace ds
     // Build a JSON object var:  obj({{"action","chat_send"},{"text","hi"}})
     juce::var obj (std::initializer_list<std::pair<const char*, juce::var>> props);
 
+    /** Which UI channel is currently visible. Polling only refreshes this channel. */
+    enum class ActiveChannel { feed, dms, discord };
+
     /** One shared client per process (held via SharedResourcePointer).
         Owns one background thread; it only polls while at least one editor is open. */
     class Client : private juce::Thread
@@ -69,6 +72,10 @@ namespace ds
 
         Session getSession() const;
         std::shared_ptr<const Snapshot> getSnapshot() const;
+
+        /** Tell the network thread which tab is open so it only polls that channel. */
+        void setActiveChannel (ActiveChannel channel);
+        ActiveChannel getActiveChannel() const { return activeChannel.load(); }
 
         using Done = std::function<void (bool ok, const juce::String& error)>;
         using UploadDone = std::function<void (bool ok, const juce::String& error, const juce::String& store,
@@ -98,6 +105,7 @@ namespace ds
         void notifyChanged();
         void notifyStatus (const juce::String&);
         juce::File sessionFile() const;
+        int pullIntervalMs() const;
 
         mutable juce::CriticalSection lock;
         Session session;
@@ -109,7 +117,8 @@ namespace ds
         juce::ListenerList<Listener> listeners;   // message thread only
         std::atomic<int> listenerCount { 0 };
         std::atomic<bool> forcePull { false };
-        juce::uint32 lastPull = 0, lastBeat = 0;
+        std::atomic<ActiveChannel> activeChannel { ActiveChannel::feed };
+        juce::uint32 lastPull = 0, lastBeat = 0, lastSocial = 0;
 
         JUCE_DECLARE_WEAK_REFERENCEABLE (Client)
     };

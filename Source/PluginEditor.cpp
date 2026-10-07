@@ -101,16 +101,41 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     for (int i = 0; i < (int) themeChoices.size(); ++i)
         themeBox.addItem (themeChoices[(size_t) i].name, i + 1);
 
-    for (auto* b : { &chatTab, &threadsTab, &discordTab })
+    for (auto* b : { &chatTab, &threadsTab, &dmsTab, &discordTab })
     {
         b->setClickingTogglesState (true);
         b->setRadioGroupId (7);
     }
     chatTab.setToggleState (true, juce::dontSendNotification);
-    chatTab.onClick    = [this] { tab = Tab::chat;    updateVisibility(); };
-    threadsTab.onClick = [this] { tab = Tab::threads; updateVisibility(); };
-    dmsTab.onClick      = [this] { tab = Tab::dms; updateVisibility(); rebuildDms(); };
-    discordTab.onClick  = [this] { tab = Tab::discord; updateVisibility(); loadDiscordChannels(); };
+    chatTab.onClick = [this]
+    {
+        tab = Tab::chat;
+        client.setActiveChannel (ds::ActiveChannel::feed);
+        updateVisibility();
+        rebuildChat();
+    };
+    threadsTab.onClick = [this]
+    {
+        tab = Tab::threads;
+        client.setActiveChannel (ds::ActiveChannel::feed);
+        updateVisibility();
+        rebuildThreadList();
+        if (tmode == TMode::detail) rebuildDetail();
+    };
+    dmsTab.onClick = [this]
+    {
+        tab = Tab::dms;
+        client.setActiveChannel (ds::ActiveChannel::dms);
+        updateVisibility();
+        rebuildDms();
+    };
+    discordTab.onClick = [this]
+    {
+        tab = Tab::discord;
+        client.setActiveChannel (ds::ActiveChannel::discord);
+        updateVisibility();
+        loadDiscordChannels();
+    };
 
     // login
     loginInfo.setFont (T::font (12.0f));
@@ -231,6 +256,7 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     };
 
     setSize (juce::jlimit(420,1400,proc.editorW), juce::jlimit(380,1000,proc.editorH));
+    client.setActiveChannel (ds::ActiveChannel::feed);
     refreshAll();
     client.addListener (this);     // polling starts now
 }
@@ -366,10 +392,29 @@ void DreamShareEditor::refreshAll()
 {
     updateHeader();
     updateVisibility();
-    rebuildChat();
-    rebuildThreadList();
-    rebuildDetail();
-    rebuildDms();
+
+    // Only rebuild the feed for the tab the user is actually looking at.
+    // This cuts UI work and avoids fighting scroll while other channels update.
+    if (! client.getSession().valid())
+        return;
+
+    switch (tab)
+    {
+        case Tab::chat:
+            rebuildChat();
+            break;
+        case Tab::threads:
+            rebuildThreadList();
+            if (tmode == TMode::detail)
+                rebuildDetail();
+            break;
+        case Tab::dms:
+            rebuildDms();
+            break;
+        case Tab::discord:
+            // Discord is on-demand (loadDiscordChannels / loadDiscordMessages).
+            break;
+    }
 }
 
 void DreamShareEditor::updateHeader()

@@ -3,8 +3,11 @@
 namespace ds
 {
 static const char* kWorker = "https://dreamshare-api.keganacummings.workers.dev/";
-static const int   kPullMs = 8000;    // same cadence as DREAMSHARELITE.html
-static const int   kBeatMs = 20000;
+// Slower cadence + channel-scoped pulls to stay under Worker rate limits.
+static const int   kFeedPullMs   = 15000;   // Chat / Threads public feed
+static const int   kDmsPullMs    = 20000;   // DMs + social metadata
+static const int   kSocialMinMs  = 60000;   // social_list at most once per minute on feed tabs
+static const int   kBeatMs       = 45000;   // presence heartbeat
 
 juce::var obj (std::initializer_list<std::pair<const char*, juce::var>> props)
 {
@@ -114,6 +117,29 @@ Client::~Client()
 void Client::addListener (Listener* l)    { listeners.add (l);    ++listenerCount; forcePull = true; notify(); }
 void Client::removeListener (Listener* l) { listeners.remove (l); --listenerCount; }
 
+void Client::setActiveChannel (ActiveChannel channel)
+{
+    const auto prev = activeChannel.exchange (channel);
+    if (prev == channel) return;
+    // One immediate refresh when the user switches tabs — never while on Discord.
+    if (channel != ActiveChannel::discord)
+    {
+        forcePull = true;
+        notify();
+    }
+}
+
+int Client::pullIntervalMs() const
+{
+    switch (activeChannel.load())
+    {
+        case ActiveChannel::dms:     return kDmsPullMs;
+        case ActiveChannel::discord: return 0; // no automatic DreamShare polling
+        case ActiveChannel::feed:
+        default:                     return kFeedPullMs;
+    }
+}
+
 Session Client::getSession() const                      { const juce::ScopedLock sl (lock); return session; }
 std::shared_ptr<const Snapshot> Client::getSnapshot() const { const juce::ScopedLock sl (lock); return snapshot; }
 
@@ -195,10 +221,19 @@ void Client::run()
         if (listenerCount.load() > 0 && getSession().valid())
         {
             const auto now = juce::Time::getMillisecondCounter();
-            if (forcePull.exchange (false) || now - lastPull >= (juce::uint32) kPullMs)
+            const int interval = pullIntervalMs();
+            // Discord tab: no DreamShare feed/social polling (loads on demand only).
+            if (interval > 0)
             {
-                pull();
-                lastPull = juce::Time::getMillisecondCounter();
+                if (forcePull.exchange (false) || now - lastPull >= (juce::uint32) interval)
+                {
+                    pull();
+                    lastPull = juce::Time::getMillisecondCounter();
+                }
+            }
+            else
+            {
+                forcePull.store (false);
             }
             if (now - lastBeat >= (juce::uint32) kBeatMs)
             {
@@ -206,7 +241,7 @@ void Client::run()
                 lastBeat = juce::Time::getMillisecondCounter();
             }
         }
-        wait (400);
+        wait (500);
     }
 }
 
@@ -257,6 +292,10 @@ bool Client::http (bool post, const juce::String& postBody, juce::var& out, juce
 // ---------------------------------------------------------------- feed
 void Client::pull()
 {
+    // Discord channel is on-demand only — never auto-poll DreamShare APIs while it is open.
+    if (activeChannel.load() == ActiveChannel::discord)
+        return;
+
     juce::var j; juce::String err;
     if (! http (false, {}, j, err)) { notifyStatus (err); return; }
 
@@ -276,8 +315,12 @@ void Client::pull()
         }
     }
 
-    auto s = std::make_shared<Snapshot>();
+    // Preserve private/social state from the previous snapshot when we skip social_list.
+    std::shared_ptr<const Snapshot> previous;
+    { const juce::ScopedLock sl (lock); previous = snapshot; }
+    auto s = previous ? std::make_shared<Snapshot> (*previous) : std::make_shared<Snapshot>();
 
+    s->threads.clear();
     if (auto* arr = j["threads"].getArray())
         for (auto& tv : *arr)
         {
@@ -301,9 +344,14 @@ void Client::pull()
     s->chat    = parseChat (j["chat"]);
     s->mods    = parseStrings (j["mods"]);
     s->supers  = parseStrings (j["supers"]);
-    s->directory = parseStrings (j["directory"]);
     if (s->supers.isEmpty()) { s->supers.add ("Trippah"); s->supers.add ("Goonr"); }
 
+    // Public directory from feed is a fallback; social_list overrides when fetched.
+    const auto feedDirectory = parseStrings (j["directory"]);
+    if (s->directory.isEmpty() && feedDirectory.size() > 0)
+        s->directory = feedDirectory;
+
+    s->themes.clear();
     if (auto* themes = j["themes"].getArray())
         for (auto& value : *themes)
         {
@@ -311,10 +359,12 @@ void Client::pull()
             if (choice.id.isNotEmpty() && choice.name.isNotEmpty()) s->themes.push_back (std::move (choice));
         }
 
+    s->roles.clear();
     if (auto* ro = j["roles"].getDynamicObject())
         for (auto& nv : ro->getProperties())
             s->roles[nv.name.toString().toLowerCase()] = parseStrings (nv.value);
 
+    s->customRoles.clear();
     if (auto* custom = j["customRoles"].getDynamicObject())
         for (auto& nv : custom->getProperties())
         {
@@ -327,23 +377,32 @@ void Client::pull()
     juce::StringArray online = parseStrings (j["online"]);
     const auto currentSession = getSession();
     if (currentSession.valid()) online.addIfNotAlreadyThere (currentSession.user, true);
-    const auto now = juce::Time::currentTimeMillis();
+    const auto nowMs = juce::Time::currentTimeMillis();
     for (auto& m : s->chat)
-        if (now - m.at < 180000) online.addIfNotAlreadyThere (m.user, true);
+        if (nowMs - m.at < 180000) online.addIfNotAlreadyThere (m.user, true);
     s->online = online;
 
-    // Private social metadata is deliberately fetched through an authenticated POST;
-    // it is never exposed by the public feed GET.
-    if (currentSession.valid())
+    // social_list is authenticated and rate-limited heavily.
+    // - Always when the DMs tab is open (that is the active channel).
+    // - At most once per kSocialMinMs while on Chat/Threads.
+    const auto channel = activeChannel.load();
+    const auto nowTick = juce::Time::getMillisecondCounter();
+    const bool needSocial = currentSession.valid()
+                            && (channel == ActiveChannel::dms
+                                || lastSocial == 0
+                                || nowTick - lastSocial >= (juce::uint32) kSocialMinMs);
+
+    if (needSocial)
     {
         juce::var social; juce::String socialErr;
-        auto req = obj({{"action","social_list"}, {"user", currentSession.user}, {"token", currentSession.token}});
-        if (http(true,juce::JSON::toString(req,true),social,socialErr))
+        auto req = obj ({{ "action", "social_list" }, { "user", currentSession.user }, { "token", currentSession.token }});
+        if (http (true, juce::JSON::toString (req, true), social, socialErr))
         {
-            s->friends = parseStrings(social["friends"]);
-            s->directory = parseStrings(social["directory"]);
-            s->friendIncoming = parseRequests(social["incoming"]);
-            s->wavRequests = parseRequests(social["wavRequests"]);
+            s->friends = parseStrings (social["friends"]);
+            s->directory = parseStrings (social["directory"]);
+            s->friendIncoming = parseRequests (social["incoming"]);
+            s->wavRequests = parseRequests (social["wavRequests"]);
+            lastSocial = nowTick;
         }
     }
 
@@ -500,7 +559,9 @@ void Client::send (juce::var body, Done done)
         const bool ok = http (true, juce::JSON::toString (body, true), j, err);
         if (ok)
         {
-            if (body["action"].toString() == "set_theme" || body["action"].toString() == "theme")
+            const auto action = body["action"].toString();
+
+            if (action == "set_theme" || action == "theme")
             {
                 auto updated = getSession();
                 updated.theme = j["theme"].toString().toLowerCase();
@@ -511,26 +572,35 @@ void Client::send (juce::var body, Done done)
                 }
             }
             if (j["chat"].isArray()) { applyChat (j["chat"]); notifyChanged(); }   // instant chat update
-            if (body["action"].toString() == "dm_list" && j["messages"].isArray())
+            if (action == "dm_list" && j["messages"].isArray())
             {
-                const juce::ScopedLock sl(lock);
-                auto updated = snapshot ? std::make_shared<Snapshot>(*snapshot) : std::make_shared<Snapshot>();
-                updated->dms = parseDms(j["messages"]);
+                const juce::ScopedLock sl (lock);
+                auto updated = snapshot ? std::make_shared<Snapshot> (*snapshot) : std::make_shared<Snapshot>();
+                updated->dms = parseDms (j["messages"]);
                 snapshot = updated;
                 notifyChanged();
             }
-            if (body["action"].toString() == "social_list")
+            if (action == "social_list")
             {
-                const juce::ScopedLock sl(lock);
-                auto updated = snapshot ? std::make_shared<Snapshot>(*snapshot) : std::make_shared<Snapshot>();
-                updated->friends = parseStrings(j["friends"]);
-                updated->directory = parseStrings(j["directory"]);
-                updated->friendIncoming = parseRequests(j["incoming"]);
-                updated->wavRequests = parseRequests(j["wavRequests"]);
+                const juce::ScopedLock sl (lock);
+                auto updated = snapshot ? std::make_shared<Snapshot> (*snapshot) : std::make_shared<Snapshot>();
+                updated->friends = parseStrings (j["friends"]);
+                updated->directory = parseStrings (j["directory"]);
+                updated->friendIncoming = parseRequests (j["incoming"]);
+                updated->wavRequests = parseRequests (j["wavRequests"]);
                 snapshot = updated;
                 notifyChanged();
             }
-            forcePull = true;
+            // Only force a full pull for mutations that change the public feed / social graph.
+            // Avoids double-request rate-limit hits after every chat/dm/react.
+            const bool needsFullPull =
+                action == "thread_post" || action == "thread" || action == "comment"
+                || action == "chat_delete" || action == "thread_delete" || action == "comment_delete"
+                || action == "friend_request" || action == "friend_accept" || action == "friend_decline"
+                || action == "friend_remove" || action == "wav_request" || action == "wav_request_approve"
+                || action == "wav_request_decline" || action == "wav_request_fulfill";
+            if (needsFullPull)
+                forcePull = true;
         }
         juce::MessageManager::callAsync ([done, ok, err] { if (done) done (ok, err); });
     });

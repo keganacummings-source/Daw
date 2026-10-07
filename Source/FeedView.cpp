@@ -158,6 +158,9 @@ void FeedView::layoutItems()
 
 void FeedView::paintContent (juce::Graphics& g)
 {
+    // Opaque content must fully paint its bounds — missing fill caused scroll glitches/tearing.
+    g.fillAll (bg);
+
     const int w = content->getWidth();
 
     if (items.empty())
@@ -170,6 +173,13 @@ void FeedView::paintContent (juce::Graphics& g)
     }
 
     const auto clip = g.getClipBounds();
+    const auto nameFont = font (12.5f, true);
+    const auto badgeFont = font (9.0f, true);
+    const auto metaFont = font (11.0f);
+    const auto chipFont = font (12.0f);
+    const auto delFont = font (10.5f);
+    const auto plusFont = font (14.0f);
+
     for (auto& it : items)
     {
         if (it.y + it.h < clip.getY() || it.y > clip.getBottom()) continue;
@@ -179,39 +189,39 @@ void FeedView::paintContent (juce::Graphics& g)
         g.fillRoundedRectangle (card, 7.0f);
         g.setColour (border);
         g.drawRoundedRectangle (card.reduced (0.5f), 8.0f, 1.0f);
-        g.setColour(accent.withAlpha(0.22f));
-        g.fillRoundedRectangle(card.getX(),card.getY(),2.5f,card.getHeight(),2.0f);
+        g.setColour (accent.withAlpha (0.22f));
+        g.fillRoundedRectangle (card.getX(), card.getY(), 2.5f, card.getHeight(), 2.0f);
 
         if (it.user.isNotEmpty())
         {
             g.setColour (pink);
-            g.setFont (font (12.5f, true));
+            g.setFont (nameFont);
             g.drawText (it.user, it.nameR, juce::Justification::centredLeft, true);
         }
         for (auto& b : it.badgeRs)
         {
             g.setColour (b.style.fill);  g.fillRoundedRectangle (b.r.toFloat(), 3.0f);
             g.setColour (b.style.edge);  g.drawRoundedRectangle (b.r.toFloat().reduced (0.5f), 3.0f, 1.0f);
-            g.setColour (b.style.ink);   g.setFont (font (9.0f, true));
+            g.setColour (b.style.ink);   g.setFont (badgeFont);
             g.drawText (b.label, b.r, juce::Justification::centred, false);
         }
         if (it.canDelete)
         {
             g.setColour (juce::Colour (0xff1a1216)); g.fillRoundedRectangle (it.delR.toFloat(), 5.0f);
             g.setColour (border);                    g.drawRoundedRectangle (it.delR.toFloat().reduced (0.5f), 5.0f, 1.0f);
-            g.setColour (dim);  g.setFont (font (10.5f));
+            g.setColour (dim);  g.setFont (delFont);
             g.drawText ("del", it.delR, juce::Justification::centred, false);
         }
 
         if (! it.titleR.isEmpty()) it.titleL.draw (g, it.titleR.toFloat());
         if (! it.metaR.isEmpty())
         {
-            g.setColour (dim); g.setFont (font (11.0f));
+            g.setColour (dim); g.setFont (metaFont);
             g.drawText (it.meta, it.metaR, juce::Justification::centredLeft, true);
         }
         if (! it.bodyR.isEmpty()) it.bodyL.draw (g, it.bodyR.toFloat());
 
-        g.setFont (font (12.0f));
+        g.setFont (chipFont);
         for (auto& c : it.chips)
         {
             g.setColour (c.on ? chipOn : chipBg);  g.fillRoundedRectangle (c.r.toFloat(), 11.0f);
@@ -221,7 +231,7 @@ void FeedView::paintContent (juce::Graphics& g)
         }
         g.setColour (chipBg);  g.fillRoundedRectangle (it.addR.toFloat(), 11.0f);
         g.setColour (chipBd);  g.drawRoundedRectangle (it.addR.toFloat().reduced (0.5f), 11.0f, 1.0f);
-        g.setColour (dim);     g.setFont (font (14.0f));
+        g.setColour (dim);     g.setFont (plusFont);
         g.drawText ("+", it.addR, juce::Justification::centred, false);
     }
 }
