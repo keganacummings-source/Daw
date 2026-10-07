@@ -967,6 +967,82 @@ async function handleAudioPartB64(env, body, user) {
 }
 
 
+
+async function discordLite(env, action, body) {
+  const token = env && env.DISCORD_BOT_TOKEN;
+  if (!token) return { ok: false, status: 503, error: 'Set worker secret DISCORD_BOT_TOKEN. The VST never holds the bot token.' };
+  const call = async (path, method, payload) => {
+    const res = await fetch('https://discord.com/api/v10' + path, {
+      method: method || 'GET',
+      headers: {
+        Authorization: 'Bot ' + token,
+        'Content-Type': 'application/json',
+        'User-Agent': 'DreamShareLite (https://dreamdaw.com, 0.4.1)'
+      },
+      body: payload ? JSON.stringify(payload) : undefined
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
+    if (!res.ok) {
+      const msg = (data && (data.message || data.error)) || ('Discord ' + res.status);
+      return { ok: false, status: res.status, error: msg };
+    }
+    return { ok: true, data: data };
+  };
+  if (action === 'discord_status') {
+    const me = await call('/users/@me', 'GET');
+    if (!me.ok) return me;
+    return { ok: true, bot: { id: me.data.id, name: me.data.username }, postsAs: 'bot' };
+  }
+  const guildId = (env && env.DISCORD_GUILD_ID) || body.guild || '';
+  let guild = guildId;
+  if (!guild) {
+    const guilds = await call('/users/@me/guilds', 'GET');
+    if (!guilds.ok) return guilds;
+    if (!guilds.data || !guilds.data.length) return { ok: false, status: 404, error: 'Bot is in 0 servers' };
+    guild = guilds.data[0].id;
+  }
+  if (action === 'discord_channels') {
+    const ch = await call('/guilds/' + guild + '/channels', 'GET');
+    if (!ch.ok) return ch;
+    const channels = (ch.data || [])
+      .filter((c) => c && (c.type === 0 || c.type === 5))
+      .map((c) => ({ id: c.id, name: c.name, parent: c.parent_id || '' }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    return { ok: true, guild: guild, channels: channels };
+  }
+  const channel = String(body.channel || body.channelId || '');
+  if (!channel) return { ok: false, status: 400, error: 'channel required' };
+  if (action === 'discord_messages') {
+    const msgs = await call('/channels/' + channel + '/messages?limit=40', 'GET');
+    if (!msgs.ok) return msgs;
+    const messages = (msgs.data || []).slice().reverse().map((m) => ({
+      id: m.id,
+      user: (m.author && (m.author.global_name || m.author.username)) || 'discord',
+      text: m.content || '',
+      at: m.timestamp || ''
+    }));
+    return { ok: true, channel: channel, messages: messages };
+  }
+  if (action === 'discord_send') {
+    const content = String(body.text || body.content || '').trim().slice(0, 2000);
+    if (!content) return { ok: false, status: 400, error: 'empty message' };
+    const sent = await call('/channels/' + channel + '/messages', 'POST', { content: content });
+    if (!sent.ok) return sent;
+    return { ok: true, id: sent.data && sent.data.id, postsAs: 'bot' };
+  }
+  if (action === 'discord_react') {
+    const message = String(body.message || body.id || '');
+    const emoji = encodeURIComponent(String(body.emoji || body.key || '👀'));
+    if (!message) return { ok: false, status: 400, error: 'message required' };
+    const reacted = await call('/channels/' + channel + '/messages/' + message + '/reactions/' + emoji + '/@me', 'PUT');
+    if (!reacted.ok) return reacted;
+    return { ok: true };
+  }
+  return { ok: false, status: 400, error: 'unknown discord action' };
+}
+
 export default {
   async fetch(request, env) {
     const method = (request.method || 'GET').toUpperCase();
@@ -1636,6 +1712,11 @@ export default {
             customRoles: cleanCustomRoles(feed.customRoles),
             roles: feed.roles || {}
           });
+        }
+
+        if (action === 'discord_status' || action === 'discord_channels' || action === 'discord_messages' || action === 'discord_send' || action === 'discord_react') {
+          const out = await discordLite(env, action, body);
+          return json(out, out.ok ? 200 : (out.status || 502));
         }
 
         return json({ ok: false, error: 'unknown action', action: action }, 400);

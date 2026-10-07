@@ -81,6 +81,8 @@ namespace ds
         void downloadDmWav (const juce::String& messageId, int parts, const juce::File& destination, Done);
         /** Sends an authenticated action (user + token are added automatically). */
         void send (juce::var body, Done done = {});
+        using JsonDone = std::function<void (bool ok, const juce::var& payload, const juce::String& error)>;
+        void sendJson (juce::var body, JsonDone done);
 
     private:
         void run() override;

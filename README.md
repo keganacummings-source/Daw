@@ -1,4 +1,4 @@
-# DreamShare Lite 0.4.0
+# DreamShare Lite 0.4.1
 
 A native JUCE VST3 chat/social client for DreamShare.
 
@@ -42,3 +42,15 @@ The existing public thread/chat/reaction/theme API remains compatible.
 
 ## Build
 The GitHub workflow still performs the worker syntax check and builds Windows/macOS VST3 packages with JUCE 8.0.6.
+
+## Discord lite
+A Discord tab reads and posts through the DreamShare worker, which calls Discord's official bot API. The VST does not embed discord.com and does not hold a bot token or a user token.
+
+Posts and reactions are sent as the bot. Discord does not allow an app to post as a user account.
+
+Worker secrets:
+- DISCORD_BOT_TOKEN — bot token
+- DISCORD_GUILD_ID — optional; otherwise the first server the bot is in
+
+Actions: discord_channels, discord_messages, discord_send, discord_react, discord_status.
+Message text stays empty until the bot has the Message Content Intent and can view the channel.

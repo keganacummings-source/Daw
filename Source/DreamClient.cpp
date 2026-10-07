@@ -536,3 +536,25 @@ void Client::send (juce::var body, Done done)
     });
 }
 }
+
+void Client::sendJson (juce::var body, JsonDone done)
+{
+    enqueue ([this, body, done]() mutable
+    {
+        const auto me = getSession();
+        if (! me.valid())
+        {
+            juce::MessageManager::callAsync ([done] { if (done) done (false, {}, "Login required"); });
+            return;
+        }
+        if (auto* o = body.getDynamicObject())
+        {
+            o->setProperty ("user", me.user);
+            o->setProperty ("token", me.token);
+        }
+        juce::var j; juce::String err;
+        const bool ok = http (true, juce::JSON::toString (body, true), j, err) && (bool) j["ok"];
+        if (! ok && err.isEmpty()) err = j["error"].toString();
+        juce::MessageManager::callAsync ([done, ok, j, err] { if (done) done (ok, j, err); });
+    });
+}

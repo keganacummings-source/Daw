@@ -77,10 +77,11 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     setResizeLimits (380, 360, 1400, 1000);
 
     for (juce::Component* c : std::initializer_list<juce::Component*> {
-             &whoLabel, &statusLabel, &onlineBtn, &logoutBtn, &chatTab, &threadsTab, &dmsTab, &themeBox,
+             &whoLabel, &statusLabel, &onlineBtn, &logoutBtn, &chatTab, &threadsTab, &dmsTab, &discordTab, &themeBox,
              &loginInfo, &loginMsg, &userEd, &passEd, &loginBtn,
              &chatFeed, &chatInput, &chatEmoji, &chatSend,
              &dmFeed, &dmPeerBox, &dmInput, &dmSend, &dmRequests,
+             &discordFeed, &discordChannels, &discordNote, &discordInput, &discordRefresh, &discordSend,
              &threadFeed, &detailFeed, &newThreadBtn, &backBtn,
              &composeTitle, &composeBody, &commentInput, &composeCount, &composeAudioBtn, &composeAudioLabel,
              &composeEmoji, &composePost, &composeCancel, &commentEmoji, &commentSend })
@@ -100,7 +101,7 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     for (int i = 0; i < (int) themeChoices.size(); ++i)
         themeBox.addItem (themeChoices[(size_t) i].name, i + 1);
 
-    for (auto* b : { &chatTab, &threadsTab })
+    for (auto* b : { &chatTab, &threadsTab, &discordTab })
     {
         b->setClickingTogglesState (true);
         b->setRadioGroupId (7);
@@ -109,6 +110,7 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     chatTab.onClick    = [this] { tab = Tab::chat;    updateVisibility(); };
     threadsTab.onClick = [this] { tab = Tab::threads; updateVisibility(); };
     dmsTab.onClick      = [this] { tab = Tab::dms; updateVisibility(); rebuildDms(); };
+    discordTab.onClick  = [this] { tab = Tab::discord; updateVisibility(); loadDiscordChannels(); };
 
     // login
     loginInfo.setFont (T::font (12.0f));
@@ -148,6 +150,18 @@ DreamShareEditor::DreamShareEditor (DreamShareProcessor& p)
     dmInput.onReturnKey = [this] { sendDm(); };
     dmSend.onClick = [this] { sendDm(); };
     dmRequests.onClick = [this] { showSocialRequests(); };
+
+    discordNote.setFont (T::font (11.0f));
+    discordNote.setColour (juce::Label::textColourId, T::dim);
+    discordNote.setText ("Discord lite. Posts as the DreamShare bot, not your account.", juce::dontSendNotification);
+    discordChannels.setTextWhenNothingSelected ("Channel");
+    discordChannels.onChange = [this] { loadDiscordMessages(); };
+    discordFeed.setEmptyText ("Pick a channel. Message text needs the Message Content Intent.");
+    discordFeed.onReact = [this] (const ds::Item& it, const juce::String& key) { reactDiscord (it, key); };
+    styleEditor (discordInput, "Message as the bot...", 2000, false);
+    discordInput.onReturnKey = [this] { sendDiscord(); };
+    discordSend.onClick = [this] { sendDiscord(); };
+    discordRefresh.onClick = [this] { loadDiscordChannels(); };
 
     // threads
     threadFeed.setEmptyText ("No threads yet. Start one with + New thread.");
@@ -262,7 +276,8 @@ void DreamShareEditor::resized()
     tabs.removeFromRight (6);
     chatTab.setBounds (tabs.removeFromLeft (58));  tabs.removeFromLeft (4);
     threadsTab.setBounds (tabs.removeFromLeft (72)); tabs.removeFromLeft (4);
-    dmsTab.setBounds (tabs.removeFromLeft (58));
+    dmsTab.setBounds (tabs.removeFromLeft (58)); tabs.removeFromLeft (4);
+    discordTab.setBounds (tabs.removeFromLeft (72));
     const auto body = r;
 
     {   // login
@@ -291,6 +306,18 @@ void DreamShareEditor::resized()
         dmSend.setBounds (in.removeFromRight (56)); in.removeFromRight (4);
         dmInput.setBounds (in);
         dmFeed.setBounds (b);
+    }
+    {   // Discord lite
+        auto b = body;
+        auto bar = b.removeFromTop (34).reduced (6, 4);
+        discordRefresh.setBounds (bar.removeFromRight (72));
+        bar.removeFromRight (6);
+        discordChannels.setBounds (bar);
+        discordNote.setBounds (b.removeFromTop (18).reduced (8, 0));
+        auto in = b.removeFromBottom (40).reduced (6, 5);
+        discordSend.setBounds (in.removeFromRight (56)); in.removeFromRight (4);
+        discordInput.setBounds (in);
+        discordFeed.setBounds (b);
     }
     {   // thread list
         auto b = body;
@@ -429,10 +456,12 @@ void DreamShareEditor::updateVisibility()
     const bool c = in && tab == Tab::chat, t = in && tab == Tab::threads;
 
     show ({ &loginInfo, &loginMsg, &userEd, &passEd, &loginBtn }, ! in);
-    show ({ &whoLabel, &onlineBtn, &logoutBtn, &chatTab, &threadsTab, &dmsTab, &themeBox }, in);
+    show ({ &whoLabel, &onlineBtn, &logoutBtn, &chatTab, &threadsTab, &dmsTab, &discordTab, &themeBox }, in);
     show ({ &chatFeed, &chatInput, &chatEmoji, &chatSend }, c);
     const bool d = in && tab == Tab::dms;
     show ({ &dmFeed, &dmPeerBox, &dmInput, &dmSend, &dmRequests }, d);
+    const bool disc = in && tab == Tab::discord;
+    show ({ &discordFeed, &discordChannels, &discordNote, &discordInput, &discordRefresh, &discordSend }, disc);
     show ({ &newThreadBtn, &threadFeed }, t && tmode == TMode::list);
     show ({ &composeTitle, &composeBody, &composeCount, &composeAudioBtn, &composeAudioLabel, &composeEmoji, &composePost, &composeCancel },
           t && tmode == TMode::compose);
@@ -905,3 +934,103 @@ void DreamShareEditor::showUserMenu (const juce::String& name, juce::Point<int> 
       });
 }
 
+
+void DreamShareEditor::loadDiscordChannels()
+{
+    if (tab != Tab::discord || ! client.getSession().valid()) return;
+    setStatus ("Loading Discord channels...");
+    juce::Component::SafePointer<DreamShareEditor> safe (this);
+    client.sendJson (obj ({ { "action", "discord_channels" } }),
+                     [safe] (bool ok, const juce::var& payload, const juce::String& error)
+                     {
+                         if (safe == nullptr) return;
+                         safe->discordChannels.clear (juce::dontSendNotification);
+                         if (! ok)
+                         {
+                             safe->setStatus (error.isEmpty() ? "Discord channels failed" : error);
+                             return;
+                         }
+                         auto* arr = payload["channels"].getArray();
+                         int id = 1;
+                         if (arr != nullptr)
+                             for (const auto& ch : *arr)
+                             {
+                                 const auto name = ch["name"].toString();
+                                 safe->discordChannels.addItem (name.isEmpty() ? ch["id"].toString() : ("#" + name), id);
+                                 safe->discordChannels.getProperties().set ("id" + juce::String (id), ch["id"].toString());
+                                 ++id;
+                             }
+                         safe->setStatus (juce::String (id - 1) + " Discord channels");
+                         if (safe->discordChannels.getNumItems() > 0)
+                         {
+                             safe->discordChannels.setSelectedId (1, juce::dontSendNotification);
+                             safe->loadDiscordMessages();
+                         }
+                     });
+}
+
+void DreamShareEditor::loadDiscordMessages()
+{
+    if (tab != Tab::discord) return;
+    const int selected = discordChannels.getSelectedId();
+    discordChannelId = discordChannels.getProperties()["id" + juce::String (selected)].toString();
+    if (discordChannelId.isEmpty()) return;
+    juce::Component::SafePointer<DreamShareEditor> safe (this);
+    client.sendJson (obj ({ { "action", "discord_messages" }, { "channel", discordChannelId } }),
+                     [safe] (bool ok, const juce::var& payload, const juce::String& error)
+                     {
+                         if (safe == nullptr) return;
+                         std::vector<ds::Item> v;
+                         if (! ok)
+                         {
+                             safe->setStatus (error.isEmpty() ? "Could not read channel" : error);
+                             safe->discordFeed.setItems ({}, true);
+                             return;
+                         }
+                         auto* arr = payload["messages"].getArray();
+                         if (arr != nullptr)
+                             for (const auto& m : *arr)
+                             {
+                                 ds::Item it;
+                                 it.kind = "chat";
+                                 it.id = m["id"].toString();
+                                 it.user = m["user"].toString();
+                                 it.body = m["text"].toString().isEmpty() ? "(no text — Message Content Intent still off, or embed-only)" : m["text"].toString();
+                                 it.me = safe->client.getSession().user;
+                                 it.reactions["eyes"] = {};
+                                 v.push_back (std::move (it));
+                             }
+                         safe->discordFeed.setItems (std::move (v), true);
+                         safe->setStatus ("Discord channel loaded");
+                     });
+}
+
+void DreamShareEditor::sendDiscord()
+{
+    const auto text = discordInput.getText().trim();
+    if (text.isEmpty() || discordChannelId.isEmpty()) return;
+    discordSend.setEnabled (false);
+    juce::Component::SafePointer<DreamShareEditor> safe (this);
+    client.sendJson (obj ({ { "action", "discord_send" }, { "channel", discordChannelId }, { "text", text } }),
+                     [safe] (bool ok, const juce::var&, const juce::String& error)
+                     {
+                         if (safe == nullptr) return;
+                         safe->discordSend.setEnabled (true);
+                         if (! ok) { safe->setStatus (error.isEmpty() ? "Discord send failed" : error); return; }
+                         safe->discordInput.clear();
+                         safe->setStatus ("Posted as the bot");
+                         safe->loadDiscordMessages();
+                     });
+}
+
+void DreamShareEditor::reactDiscord (const ds::Item& it, const juce::String&)
+{
+    if (discordChannelId.isEmpty() || it.id.isEmpty()) return;
+    juce::Component::SafePointer<DreamShareEditor> safe (this);
+    client.sendJson (obj ({ { "action", "discord_react" }, { "channel", discordChannelId }, { "message", it.id }, { "emoji", "👀" } }),
+                     [safe] (bool ok, const juce::var&, const juce::String& error)
+                     {
+                         if (safe == nullptr) return;
+                         safe->setStatus (ok ? "Reaction added as the bot" : (error.isEmpty() ? "Reaction failed" : error));
+                     });
+}

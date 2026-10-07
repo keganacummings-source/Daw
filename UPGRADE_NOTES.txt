@@ -26,3 +26,10 @@ R2 or KV must be bound for large WAV sharing. R2 is recommended.
 BUILD
 The included GitHub workflow continues to build Windows and macOS VST3 packages.
 Local build was not possible in this environment because the JUCE 8.0.6 Git dependency could not be downloaded.
+
+---
+Worker stitch (Grok):
+src/worker.js was non-destructively updated with Discord lite (discord_status /
+discord_channels / discord_messages / discord_send / discord_react) on top of
+the durable-v4 Kyoto + social + theme worker. Deploy src/worker.js (or worker.js).
+Secrets: DISCORD_BOT_TOKEN, optional DISCORD_GUILD_ID.
