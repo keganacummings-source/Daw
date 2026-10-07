@@ -535,7 +535,6 @@ void Client::send (juce::var body, Done done)
         juce::MessageManager::callAsync ([done, ok, err] { if (done) done (ok, err); });
     });
 }
-}
 
 void Client::sendJson (juce::var body, JsonDone done)
 {
